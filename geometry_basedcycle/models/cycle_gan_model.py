@@ -52,10 +52,10 @@ class CycleGANModel(BaseModel):
         """
         BaseModel.__init__(self, opt)
         # specify the training losses you want to print out. The training/test scripts will call <BaseModel.get_current_losses>
-        self.loss_names = ['D_A', 'G_A', 'D_B', 'G_B', 'within_G_A', 'reconwithin_G_A', 'within_G_B', 'reconwithin_G_B', 'cycle_A', 'cycle_B']
+        self.loss_names = ['D_A', 'G_A', 'D_B', 'G_B', 'reconwithin_G_A', 'reconwithin_G_B', 'within_G_A', 'within_G_B', 'cycle_A', 'cycle_B'] # 'reconwithin_G_A'
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
-        visual_names_A = ['real_A', 'fake_A_within', 'fake_B', 'recon_A']
-        visual_names_B = ['real_B', 'fake_B_within', 'fake_A', 'recon_B']
+        visual_names_A = ['real_A', 'fake_A_t', 'fake_A_within', 'fake_B', 'recon_A'] # 'fake_A_t'
+        visual_names_B = ['real_B', 'fake_B_t', 'fake_B_within', 'fake_A', 'recon_B']
         # if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
             # visual_names_A.append('idt_B')
             # visual_names_B.append('idt_A')
@@ -144,22 +144,26 @@ class CycleGANModel(BaseModel):
 
         ## cross domain
         self.geometry_A, self.appearance_A = self.netG_A.encoder(self.real_A) # size(1, 256, 64, 64)
-        self.geometry_A_t = self.netG_A.rot90(self.geometry_A, 0)
+        # self.geometry_A_t = self.netG_A.rot90(self.geometry_A, 0)
 
         self.geometry_B, self.appearance_B = self.netG_B.encoder(self.real_B)
-        self.geometry_B_t = self.netG_B.rot90(self.geometry_B, 0)
+        # self.geometry_B_t = self.netG_B.rot90(self.geometry_B, 0)
 
-        self.fake_B = self.netG_B.decoder(torch.cat((self.geometry_A_t, self.appearance_B), 1))
-        self.fake_A = self.netG_A.decoder(torch.cat((self.geometry_B_t, self.appearance_A), 1))
+        self.fake_B = self.netG_B.decoder(torch.cat((self.geometry_A, self.appearance_B), 1))
+        self.fake_A = self.netG_A.decoder(torch.cat((self.geometry_B, self.appearance_A), 1))
+        # self.fake_B = self.netG_B.decoder(torch.cat((self.geometry_A_t, self.appearance_B), 1))
+        # self.fake_A = self.netG_A.decoder(torch.cat((self.geometry_B_t, self.appearance_A), 1))
 
         self.geometry_A_Rec, self.appearance_B_Rec = self.netG_B.encoder(self.fake_B)
         self.geometry_B_Rec, self.appearance_A_Rec = self.netG_A.encoder(self.fake_A)
 
-        self.geometry_A_tRec = self.netG_A.rot90(self.geometry_A_Rec, 0)
-        self.geometry_B_tRec = self.netG_B.rot90(self.geometry_B_Rec, 0)
+        # self.geometry_A_tRec = self.netG_A.rot90(self.geometry_A_Rec, 0)
+        # self.geometry_B_tRec = self.netG_B.rot90(self.geometry_B_Rec, 0)
 
-        self.recon_B = self.netG_B.decoder(torch.cat((self.geometry_B_tRec, self.appearance_B_Rec), 1))
-        self.recon_A = self.netG_A.decoder(torch.cat((self.geometry_A_tRec, self.appearance_A_Rec), 1))
+        self.recon_B = self.netG_B.decoder(torch.cat((self.geometry_B_Rec, self.appearance_B_Rec), 1))
+        self.recon_A = self.netG_A.decoder(torch.cat((self.geometry_A_Rec, self.appearance_A_Rec), 1))
+        # self.recon_B = self.netG_B.decoder(torch.cat((self.geometry_B_tRec, self.appearance_B_Rec), 1))
+        # self.recon_A = self.netG_A.decoder(torch.cat((self.geometry_A_tRec, self.appearance_A_Rec), 1))
 
 
     def backward_D_basic(self, netD, real, fake):
@@ -217,8 +221,12 @@ class CycleGANModel(BaseModel):
         # Backward cycle loss || G_A(G_B(B)) - B||
         self.loss_cycle_B = self.criterionCycle(self.recon_B, self.real_B) * lambda_B
         # combined loss and calculate gradients
-        self.loss_G = self.loss_within_G_A + self.loss_reconwithin_G_A + self.loss_within_G_B + self.loss_reconwithin_G_B +\
-                      self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B
+        self.loss_recon_geo_A = self.criterionCycle(self.geometry_A_Rec, self.geometry_A) * lambda_A
+        self.loss_recon_geo_B = self.criterionCycle(self.geometry_B_Rec, self.geometry_B) * lambda_B
+        self.loss_recon_app_A = self.criterionCycle(self.appearance_A_Rec, self.appearance_A) * lambda_A
+        self.loss_recon_app_B = self.criterionCycle(self.appearance_B_Rec, self.appearance_B) * lambda_B
+        self.loss_G = self.loss_within_G_A + self.loss_within_G_B + self.loss_reconwithin_G_A + self.loss_reconwithin_G_B + self.loss_recon_geo_A + self.loss_recon_geo_B + self.loss_recon_app_A + self.loss_recon_app_B + \
+                      self.loss_G_A + self.loss_G_B + self.loss_cycle_A + self.loss_cycle_B # self.loss_reconwithin_G_A B
         self.loss_G.backward()
 
     def optimize_parameters(self):

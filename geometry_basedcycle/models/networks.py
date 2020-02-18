@@ -452,6 +452,7 @@ class EDGenerator(nn.Module):
         g_transformation = self.rot90(geometry, 0)
         ## 此处应添加分离instance的代码，还不知道如何分离，所以没写
 
+        # decoder_input = torch.cat((geometry, appearance), 1)
         decoder_input = torch.cat((g_transformation, appearance), 1)
         recon_img = self.decoder(decoder_input)
         # print(recon_img.size())
