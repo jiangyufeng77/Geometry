@@ -326,7 +326,7 @@ class UGATGenerator(nn.Module):
 
     def forward(self, input):
         out_enc_geo, cam_logit, heatmap, gamma, beta = self.encoder_geo(input)
-        out_enc_app = self.encoder_geo(input)
+        out_enc_app = self.encoder_app(input)
         in_dec = out_enc_geo + out_enc_app
         out_dec = self.decoder(in_dec, gamma, beta)
         return out_dec
