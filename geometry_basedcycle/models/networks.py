@@ -322,13 +322,13 @@ class UGATGenerator(nn.Module):
 
         self.encoder_geo = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, True, light, use_dropout=False, padding_type='reflect')
         self.encoder_app = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, False, light, use_dropout=False, padding_type='reflect')
-        self.decoder = Decoder(output_nc, ngf, n_blocks=4)
+        self.dec = Decoder(output_nc, ngf, n_blocks=4)
 
     def forward(self, input):
         out_enc_geo, cam_logit, heatmap, gamma, beta = self.encoder_geo(input)
         out_enc_app = self.encoder_app(input)
         in_dec = out_enc_geo + out_enc_app
-        out_dec = self.decoder(in_dec, gamma, beta)
+        out_dec = self.dec(in_dec, gamma, beta)
         return out_dec
 
     def encoder(self, input):
@@ -337,7 +337,7 @@ class UGATGenerator(nn.Module):
         return out_enc_app, out_enc_geo, cam_logit, heatmap, gamma, beta
 
     def decoder(self, input, gamma, beta):
-        return self.decoder(input, gamma, beta)
+        return self.dec(input, gamma, beta)
 
 class Encoder(nn.Module):
     def __init__(self, input_nc, ngf, norm_layer, n_blocks=4, img_size = 256, geometry=True, light=False, use_dropout=False, padding_type='reflect'):
