@@ -333,7 +333,7 @@ class UGATGenerator(nn.Module):
 
     def encoder(self, input):
         out_enc_geo, cam_logit, heatmap, gamma, beta = self.encoder_geo(input)
-        out_enc_app = self.encoder_geo(input)
+        out_enc_app = self.encoder_app(input)
         return out_enc_app, out_enc_geo, cam_logit, heatmap, gamma, beta
 
     def decoder(self, input, gamma, beta):
