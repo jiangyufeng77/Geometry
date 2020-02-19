@@ -3,7 +3,6 @@ import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
-from torch.nn.parameter import Parameter
 
 
 ###############################################################################
@@ -112,7 +111,7 @@ def init_net(net, init_type='normal', init_gain=0.02, gpu_ids=[]):
     if len(gpu_ids) > 0:
         assert(torch.cuda.is_available())
         net.to(gpu_ids[0])
-        net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs
+        # net = torch.nn.DataParallel(net, gpu_ids)  # multi-GPUs
     init_weights(net, init_type, init_gain=init_gain)
     return net
 
@@ -157,8 +156,6 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
         net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'unetED_256':
         net = EDGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    elif netG == 'att_UGATIT':
-        net = UGATGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, n_blocks=4, img_size=256, light=False, use_dropout=use_dropout)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -315,220 +312,6 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
         return gradient_penalty, gradients
     else:
         return 0.0, None
-
-class UGATGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, n_blocks=4, img_size=256, light=False, use_dropout=False):
-        super(UGATGenerator, self).__init__()
-
-        self.encoder_geo = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, True, light)
-        self.encoder_app = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, False, light)
-        self.decoder = Decoder(output_nc, ngf, n_blocks=4)
-
-    def forward(self, input):
-        out_enc_geo, cam_logit, heatmap, gamma, beta = self.encoder_geo(input)
-        out_enc_app = self.encoder_geo(input)
-        in_dec = out_enc_geo + out_enc_app
-        out_dec = self.decoder(in_dec, gamma, beta)
-        return out_dec
-
-    def encoder(self, input):
-        out_enc_geo, cam_logit, heatmap, gamma, beta = self.encoder_geo(input)
-        out_enc_app = self.encoder_geo(input)
-        return out_enc_app, out_enc_geo, cam_logit, heatmap, gamma, beta
-
-    def decoder(self, input, gamma, beta):
-        return self.decoder(input, gamma, beta)
-
-class Encoder(nn.Module):
-    def __init__(self, input_nc, ngf, norm_layer, n_blocks=4, img_size = 256, geometry=True, light=False):
-        super(Encoder, self).__init__()
-        self.light = light
-        self.geometry = geometry
-        DownBlock = []
-        DownBlock += [nn.ReflectionPad2d(3),
-                      nn.Conv2d(input_nc, ngf, kernel_size=7, stride=1, padding=0, bias=False),
-                      norm_layer(ngf),
-                      nn.ReLU(True)]
-
-        # Down-Sampling
-        n_downsampling = 2
-        for i in range(n_downsampling):
-            mult = 2 ** i
-            DownBlock += [nn.ReflectionPad2d(1),
-                          nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=0, bias=False),
-                          norm_layer(ngf * mult * 2),
-                          nn.ReLU(True)]
-
-        # Down-Sampling Bottleneck
-        mult = 2 ** n_downsampling
-        for i in range(n_blocks):
-            DownBlock += [ResnetBlock(ngf * mult, use_bias=False)]
-
-        if self.geometry:
-            # Class Activation Map
-            self.gap_fc = nn.Linear(ngf * mult, 1, bias=False)
-            self.gmp_fc = nn.Linear(ngf * mult, 1, bias=False)
-            self.conv1x1 = nn.Conv2d(ngf * mult * 2, ngf * mult, kernel_size=1, stride=1, bias=True)
-            self.relu = nn.ReLU(True)
-
-            # Gamma, Beta block
-            if self.light:
-                FC = [nn.Linear(ngf * mult, ngf * mult, bias=False),
-                      nn.ReLU(True),
-                      nn.Linear(ngf * mult, ngf * mult, bias=False),
-                      nn.ReLU(True)]
-            else:
-                FC = [nn.Linear(img_size // mult * img_size // mult * ngf * mult, ngf * mult, bias=False),
-                      nn.ReLU(True),
-                      nn.Linear(ngf * mult, ngf * mult, bias=False),
-                      nn.ReLU(True)]
-            self.gamma = nn.Linear(ngf * mult, ngf * mult, bias=False)
-            self.beta = nn.Linear(ngf * mult, ngf * mult, bias=False)
-
-            self.DownBlock = nn.Sequential(*DownBlock)
-            self.FC = nn.Sequential(*FC)
-        else:
-            self.DownBlock = nn.Sequential(*DownBlock)
-
-    def forward(self, input):
-        x = self.DownBlock(input)
-
-        if self.geometry:
-            gap = torch.nn.functional.adaptive_avg_pool2d(x, 1)
-            gap_logit = self.gap_fc(gap.view(x.shape[0], -1))
-            gap_weight = list(self.gap_fc.parameters())[0]
-            gap = x * gap_weight.unsqueeze(2).unsqueeze(3)
-
-            gmp = torch.nn.functional.adaptive_max_pool2d(x, 1)
-            gmp_logit = self.gmp_fc(gmp.view(x.shape[0], -1))
-            gmp_weight = list(self.gmp_fc.parameters())[0]
-            gmp = x * gmp_weight.unsqueeze(2).unsqueeze(3)
-
-            cam_logit = torch.cat([gap_logit, gmp_logit], 1)
-            x = torch.cat([gap, gmp], 1)
-            x = self.relu(self.conv1x1(x))
-
-            heatmap = torch.sum(x, dim=1, keepdim=True)
-
-            if self.light:
-                x_ = torch.nn.functional.adaptive_avg_pool2d(x, 1)
-                x_ = self.FC(x_.view(x_.shape[0], -1))
-            else:
-                x_ = self.FC(x.view(x.shape[0], -1))
-            gamma, beta = self.gamma(x_), self.beta(x_)
-
-            return x, cam_logit, heatmap, gamma, beta
-        else:
-            return x
-
-class Decoder(nn.Module):
-    def __init__(self, output_nc, ngf, n_blocks=4):
-        super(Decoder, self).__init__()
-        self.n_blocks = n_blocks
-        # Up-Sampling Bottleneck
-        n_downsampling = 2
-        mult = 2 ** n_downsampling
-        for i in range(n_blocks):
-            setattr(self, 'UpBlock1_' + str(i + 1), ResnetAdaILNBlock(ngf * mult, use_bias=False))
-
-        # Up-Sampling
-        UpBlock2 = []
-        for i in range(n_downsampling):
-            mult = 2 ** (n_downsampling - i)
-            UpBlock2 += [nn.Upsample(scale_factor=2, mode='nearest'),
-                         nn.ReflectionPad2d(1),
-                         nn.Conv2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=1, padding=0, bias=False),
-                         ILN(int(ngf * mult / 2)),
-                         nn.ReLU(True)]
-
-        UpBlock2 += [nn.ReflectionPad2d(3),
-                     nn.Conv2d(ngf, output_nc, kernel_size=7, stride=1, padding=0, bias=False),
-                     nn.Tanh()]
-
-        self.UpBlock2 = nn.Sequential(*UpBlock2)
-
-    def forward(self, input, gamma, beta):
-        for i in range(self.n_blocks):
-            x = getattr(self, 'UpBlock1_' + str(i + 1))(input, gamma, beta)
-        out = self.UpBlock2(x)
-        return out
-
-class ResnetAdaILNBlock(nn.Module):
-    def __init__(self, dim, use_bias):
-        super(ResnetAdaILNBlock, self).__init__()
-        self.pad1 = nn.ReflectionPad2d(1)
-        self.conv1 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=0, bias=use_bias)
-        self.norm1 = adaILN(dim)
-        self.relu1 = nn.ReLU(True)
-
-        self.pad2 = nn.ReflectionPad2d(1)
-        self.conv2 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=0, bias=use_bias)
-        self.norm2 = adaILN(dim)
-
-    def forward(self, x, gamma, beta):
-        out = self.pad1(x)
-        out = self.conv1(out)
-        out = self.norm1(out, gamma, beta)
-        out = self.relu1(out)
-        out = self.pad2(out)
-        out = self.conv2(out)
-        out = self.norm2(out, gamma, beta)
-
-        return out + x
-
-
-class adaILN(nn.Module):
-    def __init__(self, num_features, eps=1e-5):
-        super(adaILN, self).__init__()
-        self.eps = eps
-        self.rho = Parameter(torch.Tensor(1, num_features, 1, 1))
-        self.rho.data.fill_(0.9)
-
-    def forward(self, input, gamma, beta):
-        in_mean, in_var = torch.mean(input, dim=[2, 3], keepdim=True), torch.var(input, dim=[2, 3], keepdim=True)
-        out_in = (input - in_mean) / torch.sqrt(in_var + self.eps)
-        ln_mean, ln_var = torch.mean(input, dim=[1, 2, 3], keepdim=True), torch.var(input, dim=[1, 2, 3], keepdim=True)
-        out_ln = (input - ln_mean) / torch.sqrt(ln_var + self.eps)
-        out = self.rho.expand(input.shape[0], -1, -1, -1) * out_in + (1-self.rho.expand(input.shape[0], -1, -1, -1)) * out_ln
-        out = out * gamma.unsqueeze(2).unsqueeze(3) + beta.unsqueeze(2).unsqueeze(3)
-
-        return out
-
-
-class ILN(nn.Module):
-    def __init__(self, num_features, eps=1e-5):
-        super(ILN, self).__init__()
-        self.eps = eps
-        self.rho = Parameter(torch.Tensor(1, num_features, 1, 1))
-        self.gamma = Parameter(torch.Tensor(1, num_features, 1, 1))
-        self.beta = Parameter(torch.Tensor(1, num_features, 1, 1))
-        self.rho.data.fill_(0.0)
-        self.gamma.data.fill_(1.0)
-        self.beta.data.fill_(0.0)
-
-    def forward(self, input):
-        in_mean, in_var = torch.mean(input, dim=[2, 3], keepdim=True), torch.var(input, dim=[2, 3], keepdim=True)
-        out_in = (input - in_mean) / torch.sqrt(in_var + self.eps)
-        ln_mean, ln_var = torch.mean(input, dim=[1, 2, 3], keepdim=True), torch.var(input, dim=[1, 2, 3], keepdim=True)
-        out_ln = (input - ln_mean) / torch.sqrt(ln_var + self.eps)
-        out = self.rho.expand(input.shape[0], -1, -1, -1) * out_in + (1-self.rho.expand(input.shape[0], -1, -1, -1)) * out_ln
-        out = out * self.gamma.expand(input.shape[0], -1, -1, -1) + self.beta.expand(input.shape[0], -1, -1, -1)
-
-        return out
-
-class RhoClipper(object):
-
-    def __init__(self, min, max):
-        self.clip_min = min
-        self.clip_max = max
-        assert min < max
-
-    def __call__(self, module):
-
-        if hasattr(module, 'rho'):
-            w = module.rho.data
-            w = w.clamp(self.clip_min, self.clip_max)
-            module.rho.data = w
 
 class ResnetGenerator(nn.Module):
     """Resnet-based generator that consists of Resnet blocks between a few downsampling/upsampling operations.
