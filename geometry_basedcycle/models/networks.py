@@ -155,8 +155,8 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
         net = UnetGenerator(input_nc, output_nc, 7, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'unet_256':
         net = UnetGenerator(input_nc, output_nc, 8, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
-    elif netG == 'unetED_256':
-        net = EDGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
+    # elif netG == 'unetED_256':
+    #     net = EDGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout)
     elif netG == 'att_UGATIT':
         net = UGATGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, n_blocks=4, img_size=256, light=False, use_dropout=use_dropout)
     else:
@@ -320,8 +320,8 @@ class UGATGenerator(nn.Module):
     def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, n_blocks=4, img_size=256, light=False, use_dropout=False):
         super(UGATGenerator, self).__init__()
 
-        self.encoder_geo = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, True, light)
-        self.encoder_app = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, False, light)
+        self.encoder_geo = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, True, light, use_dropout=False, padding_type='reflect')
+        self.encoder_app = Encoder(input_nc, ngf, norm_layer, n_blocks, img_size, False, light, use_dropout=False, padding_type='reflect')
         self.decoder = Decoder(output_nc, ngf, n_blocks=4)
 
     def forward(self, input):
@@ -340,10 +340,16 @@ class UGATGenerator(nn.Module):
         return self.decoder(input, gamma, beta)
 
 class Encoder(nn.Module):
-    def __init__(self, input_nc, ngf, norm_layer, n_blocks=4, img_size = 256, geometry=True, light=False):
+    def __init__(self, input_nc, ngf, norm_layer, n_blocks=4, img_size = 256, geometry=True, light=False, use_dropout=False, padding_type='reflect'):
         super(Encoder, self).__init__()
         self.light = light
         self.geometry = geometry
+
+        if type(norm_layer) == functools.partial:
+            use_bias = norm_layer.func == nn.InstanceNorm2d
+        else:
+            use_bias = norm_layer == nn.InstanceNorm2d
+
         DownBlock = []
         DownBlock += [nn.ReflectionPad2d(3),
                       nn.Conv2d(input_nc, ngf, kernel_size=7, stride=1, padding=0, bias=False),
@@ -362,7 +368,7 @@ class Encoder(nn.Module):
         # Down-Sampling Bottleneck
         mult = 2 ** n_downsampling
         for i in range(n_blocks):
-            DownBlock += [ResnetBlock(ngf * mult, use_bias=False)]
+            DownBlock += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
 
         if self.geometry:
             # Class Activation Map
