@@ -57,8 +57,8 @@ class CycleGANModel(BaseModel):
         self.loss_names = ['D_A', 'G_A', 'D_B', 'G_B', 'G_A_cam', 'G_B_cam', 'cycle_A', 'cycle_B',
                            'recon_geo_A', 'recon_geo_B', 'recon_app_A', 'recon_app_B', 'identity_G_A', 'identity_G_B']  # 'reconwithin_G_A'
         # specify the images you want to save/display. The training/test scripts will call <BaseModel.get_current_visuals>
-        visual_names_A = ['real_A', 'fake_A_within', 'fake_A', 'recon_A', 'appearance_A', 'geometry_A']  # 'fake_A_t'
-        visual_names_B = ['real_B', 'fake_B_within', 'fake_B', 'recon_B', 'appearance_B', 'geometry_B']
+        visual_names_A = ['real_A', 'fake_A_within', 'fake_A', 'recon_A', 'appearance_A']  # 'fake_A_t'
+        visual_names_B = ['real_B', 'fake_B_within', 'fake_B', 'recon_B', 'appearance_B']
         # if self.isTrain and self.opt.lambda_identity > 0.0:  # if identity loss is used, we also visualize idt_B=G_A(B) ad idt_A=G_A(B)
         # visual_names_A.append('idt_B')
         # visual_names_B.append('idt_A')
