@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import init
 import functools
 from torch.optim import lr_scheduler
+from torch.nn.parameter import Parameter
 
 ###############################################################################
 # Helper Functions
@@ -76,9 +77,9 @@ def define_G(input_nc, output_nc, ngf, netG, norm='batch', use_dropout=False, in
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netG == 'basic':
-        net = ResnetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
-    elif netG == 'set':
         net = ResnetSetGenerator(input_nc, output_nc, ngf, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=9)
+    elif netG == 'attention':
+        net = UGATGenerator(input_nc, output_nc, ngf, img_size=256, norm_layer=norm_layer, use_dropout=use_dropout, n_blocks=4)
     else:
         raise NotImplementedError('Generator model name [%s] is not recognized' % netG)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -89,9 +90,9 @@ def define_D(input_nc, ndf, netD, n_layers_D=3, norm='batch', use_sigmoid=False,
     norm_layer = get_norm_layer(norm_type=norm)
 
     if netD == 'basic':
-        net = NLayerDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, use_sigmoid=use_sigmoid)
-    elif netD == 'set':
         net = NLayerSetDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, use_sigmoid=use_sigmoid)
+    elif netD == 'attention':
+        net = AttDiscriminator(input_nc, ndf, n_layers=3, norm_layer=norm_layer, use_sigmoid=use_sigmoid)
     else:
         raise NotImplementedError('Discriminator model name [%s] is not recognized' % net)
     return init_net(net, init_type, init_gain, gpu_ids)
@@ -188,56 +189,260 @@ class SpectralNorm(nn.Module):
         return self.module.forward(*args)
 
 
-# Defines the generator that consists of Resnet blocks between a few
-# downsampling/upsampling operations.
-# Code and idea originally from Justin Johnson's architecture.
-# https://github.com/jcjohnson/fast-neural-style/
-class ResnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, ngf=64, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=9, padding_type='reflect'):
-        assert(n_blocks >= 0)
-        super(ResnetGenerator, self).__init__()
+class UGATGenerator(nn.Module):
+    def __init__(self, input_nc, output_nc, ngf=64, img_size=256, norm_layer=nn.BatchNorm2d, use_dropout=False, n_blocks=4,
+                 padding_type='reflect'):
+        assert (n_blocks >= 0)
+        super(UGATGenerator, self).__init__()
         self.input_nc = input_nc
         self.output_nc = output_nc
         self.ngf = ngf
+        self.light = True
+
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
+        n_downsampling = 2
+        self.encoder_img = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+                                            padding_type, use_bias)
+        self.encoder_seg = Encoder(1, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type,
+                                            use_bias)
+        self.decoder_img = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
+        self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
+
+        mult = 2 ** n_downsampling
+        # Class Activation Map
+        self.gap_fc = nn.Linear(ngf * mult, 1, bias=False)
+        self.gmp_fc = nn.Linear(ngf * mult, 1, bias=False)
+        self.conv1x1 = nn.Conv2d(ngf * mult * 2, ngf * mult, kernel_size=1, stride=1, bias=True)
+        self.relu = nn.ReLU(True)
+
+        # Gamma, Beta block
+        if self.light:
+            FC = [nn.Linear(ngf * mult, ngf * mult, bias=False),
+                  nn.ReLU(True),
+                  nn.Linear(ngf * mult, ngf * mult, bias=False),
+                  nn.ReLU(True)]
+        else:
+            FC = [nn.Linear(img_size // mult * img_size // mult * ngf * mult, ngf * mult, bias=False),
+                  nn.ReLU(True),
+                  nn.Linear(ngf * mult, ngf * mult, bias=False),
+                  nn.ReLU(True)]
+        self.gamma = nn.Linear(ngf * mult, ngf * mult, bias=False)
+        self.beta = nn.Linear(ngf * mult, ngf * mult, bias=False)
+
+        self.FC = nn.Sequential(*FC)
+
+    def forward(self, inp):
+        # split data
+        img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
+        segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
+        mean = (segs + 1).mean(0).mean(-1).mean(-1)
+        if mean.sum() == 0:
+            mean[0] = 1  # forward at least one segmentation
+
+        # run image encoder
+        enc_img = self.encoder_img(img)
+        # add attention to image
+        gap = torch.nn.functional.adaptive_avg_pool2d(enc_img, 1)
+        gap_logit = self.gap_fc(gap.view(enc_img.shape[0], -1))
+        gap_weight = list(self.gap_fc.parameters())[0]
+        gap = enc_img * gap_weight.unsqueeze(2).unsqueeze(3)
+
+        gmp = torch.nn.functional.adaptive_max_pool2d(enc_img, 1)
+        gmp_logit = self.gmp_fc(gmp.view(enc_img.shape[0], -1))
+        gmp_weight = list(self.gmp_fc.parameters())[0]
+        gmp = enc_img * gmp_weight.unsqueeze(2).unsqueeze(3)
+
+        cam_logit = torch.cat([gap_logit, gmp_logit], 1)
+        enc_img = torch.cat([gap, gmp], 1)
+        enc_img = self.relu(self.conv1x1(enc_img))
+
+        heatmap = torch.sum(enc_img, dim=1, keepdim=True)
+
+        if self.light:
+            x_ = torch.nn.functional.adaptive_avg_pool2d(enc_img, 1)
+            x_ = self.FC(x_.view(x_.shape[0], -1))
+        else:
+            x_ = self.FC(enc_img.view(enc_img.shape[0], -1))
+        gamma, beta = self.gamma(x_), self.beta(x_)
+
+        # run segmentation encoder
+        enc_segs = list()
+        for i in range(segs.size(1)):
+            if mean[i] > 0:  # skip empty segmentation
+                seg = segs[:, i, :, :].unsqueeze(1)
+                enc_segs.append(self.encoder_seg(seg))
+        enc_segs = torch.cat(enc_segs)
+        enc_segs_sum = torch.sum(enc_segs, dim=0, keepdim=True)  # aggregated set feature
+
+        # run decoder
+        feat = torch.cat([enc_img, enc_segs_sum], dim=1)
+        out = [self.decoder_img(feat, gamma, beta)]
+        idx = 0
+        for i in range(segs.size(1)):
+            if mean[i] > 0:
+                enc_seg = enc_segs[idx].unsqueeze(0)  # (1, ngf, w, h)
+                idx += 1  # move to next index
+                feat = torch.cat([enc_seg, enc_img, enc_segs_sum], dim=1)
+                out += [self.decoder_seg(feat)]
+            else:
+                out += [segs[:, i, :, :].unsqueeze(1)]  # skip empty segmentation
+        return torch.cat(out, dim=1), cam_logit, heatmap
+
+
+class Encoder(nn.Module):
+    def __init__(self, input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type, use_bias):
+        super(Encoder, self).__init__()
+
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0,
-                           bias=use_bias),
+                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
-        n_downsampling = 2
         for i in range(n_downsampling):
-            mult = 2**i
-            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3,
-                                stride=2, padding=1, bias=use_bias),
+            mult = 2 ** i
+            model += [nn.Conv2d(ngf * mult, ngf * mult * 2, kernel_size=3, stride=2, padding=1, bias=use_bias),
                       norm_layer(ngf * mult * 2),
                       nn.ReLU(True)]
 
-        mult = 2**n_downsampling
+        mult = 2 ** n_downsampling
         for i in range(n_blocks):
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
-
-        for i in range(n_downsampling):
-            mult = 2**(n_downsampling - i)
-            model += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2),
-                                         kernel_size=3, stride=2,
-                                         padding=1, output_padding=1,
-                                         bias=use_bias),
-                      norm_layer(int(ngf * mult / 2)),
-                      nn.ReLU(True)]
-        model += [nn.ReflectionPad2d(3)]
-        model += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
-        model += [nn.Tanh()]
+            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                                  use_bias=use_bias)]
 
         self.model = nn.Sequential(*model)
 
+    def forward(self, x):
+        return self.model(x)
+
+class Decoder_img(nn.Module):
+    def __init__(self, output_nc, ngf, n_blocks, use_bias):
+        super(Decoder_img, self).__init__()
+
+        self.n_blocks = n_blocks
+        # Up-Sampling Bottleneck
+        n_downsampling = 2
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):
+            setattr(self, 'UpBlock1_' + str(i + 1), ResnetAdaILNBlock(ngf * mult, use_bias=False))
+
+        # Up-Sampling
+        UpBlock2 = []
+        for i in range(n_downsampling):
+            mult = 2 ** (n_downsampling - i)
+            UpBlock2 += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=2, padding=1, output_padding=1, bias=use_bias),
+                         ILN(int(ngf * mult / 2)),
+                         nn.ReLU(True)]
+
+        UpBlock2 += [nn.ReflectionPad2d(3),
+                     nn.Conv2d(ngf, output_nc, kernel_size=7, stride=1, padding=0, bias=False),
+                     nn.Tanh()]
+
+        self.UpBlock2 = nn.Sequential(*UpBlock2)
+
+    def forward(self, input, gamma, beta):
+        for i in range(self.n_blocks):
+            x = getattr(self, 'UpBlock1_' + str(i + 1))(input, gamma, beta)
+        out = self.UpBlock2(x)
+        return out
+
+class Decoder_seg(nn.Module):
+    def __init__(self, output_nc, ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias):
+        super(Decoder_seg, self).__init__()
+
+        self.n_blocks = n_blocks
+        # Up-Sampling Bottleneck
+        n_downsampling = 2
+        mult = 2 ** n_downsampling
+        UpBlock = []
+        for i in range(n_blocks):
+            UpBlock += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                                  use_bias=use_bias)]
+
+        # Up-Sampling
+        for i in range(n_downsampling):
+            mult = 2 ** (n_downsampling - i)
+            UpBlock += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=2, padding=1,
+                                            output_padding=1, bias=use_bias),
+                         norm_layer(int(ngf * mult / 2)),
+                         nn.ReLU(True)]
+
+        UpBlock += [nn.ReflectionPad2d(3)]
+        UpBlock += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+        UpBlock += [nn.Tanh()]
+
+        self.UpBlock = nn.Sequential(*UpBlock)
+
     def forward(self, input):
-        return self.model(input)
+        out = self.UpBlock(input)
+        return out
+
+
+class ResnetAdaILNBlock(nn.Module):
+    def __init__(self, dim, use_bias):
+        super(ResnetAdaILNBlock, self).__init__()
+        self.pad1 = nn.ReflectionPad2d(1)
+        self.conv1 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=0, bias=use_bias)
+        self.norm1 = adaILN(dim)
+        self.relu1 = nn.ReLU(True)
+
+        self.pad2 = nn.ReflectionPad2d(1)
+        self.conv2 = nn.Conv2d(dim, dim, kernel_size=3, stride=1, padding=0, bias=use_bias)
+        self.norm2 = adaILN(dim)
+
+    def forward(self, x, gamma, beta):
+        out = self.pad1(x)
+        out = self.conv1(out)
+        out = self.norm1(out, gamma, beta)
+        out = self.relu1(out)
+        out = self.pad2(out)
+        out = self.conv2(out)
+        out = self.norm2(out, gamma, beta)
+
+        return out + x
+
+
+class adaILN(nn.Module):
+    def __init__(self, num_features, eps=1e-5):
+        super(adaILN, self).__init__()
+        self.eps = eps
+        self.rho = Parameter(torch.Tensor(1, num_features, 1, 1))
+        self.rho.data.fill_(0.9)
+
+    def forward(self, input, gamma, beta):
+        in_mean, in_var = torch.mean(input, dim=[2, 3], keepdim=True), torch.var(input, dim=[2, 3], keepdim=True)
+        out_in = (input - in_mean) / torch.sqrt(in_var + self.eps)
+        ln_mean, ln_var = torch.mean(input, dim=[1, 2, 3], keepdim=True), torch.var(input, dim=[1, 2, 3], keepdim=True)
+        out_ln = (input - ln_mean) / torch.sqrt(ln_var + self.eps)
+        out = self.rho.expand(input.shape[0], -1, -1, -1) * out_in + (1-self.rho.expand(input.shape[0], -1, -1, -1)) * out_ln
+        out = out * gamma.unsqueeze(2).unsqueeze(3) + beta.unsqueeze(2).unsqueeze(3)
+
+        return out
+
+
+class ILN(nn.Module):
+    def __init__(self, num_features, eps=1e-5):
+        super(ILN, self).__init__()
+        self.eps = eps
+        self.rho = Parameter(torch.Tensor(1, num_features, 1, 1))
+        self.gamma = Parameter(torch.Tensor(1, num_features, 1, 1))
+        self.beta = Parameter(torch.Tensor(1, num_features, 1, 1))
+        self.rho.data.fill_(0.0)
+        self.gamma.data.fill_(1.0)
+        self.beta.data.fill_(0.0)
+
+    def forward(self, input):
+        in_mean, in_var = torch.mean(input, dim=[2, 3], keepdim=True), torch.var(input, dim=[2, 3], keepdim=True)
+        out_in = (input - in_mean) / torch.sqrt(in_var + self.eps)
+        ln_mean, ln_var = torch.mean(input, dim=[1, 2, 3], keepdim=True), torch.var(input, dim=[1, 2, 3], keepdim=True)
+        out_ln = (input - ln_mean) / torch.sqrt(ln_var + self.eps)
+        out = self.rho.expand(input.shape[0], -1, -1, -1) * out_in + (1-self.rho.expand(input.shape[0], -1, -1, -1)) * out_ln
+        out = out * self.gamma.expand(input.shape[0], -1, -1, -1) + self.beta.expand(input.shape[0], -1, -1, -1)
+
+        return out
 
 
 # ResNet generator for "set" of instance attributes
@@ -366,135 +571,6 @@ class ResnetBlock(nn.Module):
         return out
 
 
-# Defines the Unet generator.
-# |num_downs|: number of downsamplings in UNet. For example,
-# if |num_downs| == 7, image of size 128x128 will become of size 1x1
-# at the bottleneck
-class UnetGenerator(nn.Module):
-    def __init__(self, input_nc, output_nc, num_downs, ngf=64,
-                 norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(UnetGenerator, self).__init__()
-
-        # construct unet structure
-        unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=None, norm_layer=norm_layer, innermost=True)
-        for i in range(num_downs - 5):
-            unet_block = UnetSkipConnectionBlock(ngf * 8, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer, use_dropout=use_dropout)
-        unet_block = UnetSkipConnectionBlock(ngf * 4, ngf * 8, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlock(ngf * 2, ngf * 4, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlock(ngf, ngf * 2, input_nc=None, submodule=unet_block, norm_layer=norm_layer)
-        unet_block = UnetSkipConnectionBlock(output_nc, ngf, input_nc=input_nc, submodule=unet_block, outermost=True, norm_layer=norm_layer)
-
-        self.model = unet_block
-
-    def forward(self, input):
-        return self.model(input)
-
-
-# Defines the submodule with skip connection.
-# X -------------------identity---------------------- X
-#   |-- downsampling -- |submodule| -- upsampling --|
-class UnetSkipConnectionBlock(nn.Module):
-    def __init__(self, outer_nc, inner_nc, input_nc=None,
-                 submodule=None, outermost=False, innermost=False, norm_layer=nn.BatchNorm2d, use_dropout=False):
-        super(UnetSkipConnectionBlock, self).__init__()
-        self.outermost = outermost
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
-        if input_nc is None:
-            input_nc = outer_nc
-        downconv = nn.Conv2d(input_nc, inner_nc, kernel_size=4,
-                             stride=2, padding=1, bias=use_bias)
-        downrelu = nn.LeakyReLU(0.2, True)
-        downnorm = norm_layer(inner_nc)
-        uprelu = nn.ReLU(True)
-        upnorm = norm_layer(outer_nc)
-
-        if outermost:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1)
-            down = [downconv]
-            up = [uprelu, upconv, nn.Tanh()]
-            model = down + [submodule] + up
-        elif innermost:
-            upconv = nn.ConvTranspose2d(inner_nc, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
-            down = [downrelu, downconv]
-            up = [uprelu, upconv, upnorm]
-            model = down + up
-        else:
-            upconv = nn.ConvTranspose2d(inner_nc * 2, outer_nc,
-                                        kernel_size=4, stride=2,
-                                        padding=1, bias=use_bias)
-            down = [downrelu, downconv, downnorm]
-            up = [uprelu, upconv, upnorm]
-
-            if use_dropout:
-                model = down + [submodule] + up + [nn.Dropout(0.5)]
-            else:
-                model = down + [submodule] + up
-
-        self.model = nn.Sequential(*model)
-
-    def forward(self, x):
-        if self.outermost:
-            return self.model(x)
-        else:
-            return torch.cat([x, self.model(x)], 1)
-
-
-# Defines the PatchGAN discriminator with the specified arguments.
-class NLayerDiscriminator(nn.Module):
-    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_sigmoid=False):
-        super(NLayerDiscriminator, self).__init__()
-        if type(norm_layer) == functools.partial:
-            use_bias = norm_layer.func == nn.InstanceNorm2d
-        else:
-            use_bias = norm_layer == nn.InstanceNorm2d
-
-        kw = 4
-        padw = 1
-        sequence = [
-            # Use spectral normalization
-            SpectralNorm(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)),
-            nn.LeakyReLU(0.2, True)
-        ]
-
-        nf_mult = 1
-        nf_mult_prev = 1
-        for n in range(1, n_layers):
-            nf_mult_prev = nf_mult
-            nf_mult = min(2**n, 8)
-            sequence += [
-                # Use spectral normalization
-                SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw, bias=use_bias)),
-                norm_layer(ndf * nf_mult),
-                nn.LeakyReLU(0.2, True)
-            ]
-
-        nf_mult_prev = nf_mult
-        nf_mult = min(2**n_layers, 8)
-        sequence += [
-            # Use spectral normalization
-            SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw, bias=use_bias)),
-            norm_layer(ndf * nf_mult),
-            nn.LeakyReLU(0.2, True)
-        ]
-
-        # Use spectral normalization
-        sequence += [SpectralNorm(nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))]
-
-        if use_sigmoid:
-            sequence += [nn.Sigmoid()]
-
-        self.model = nn.Sequential(*sequence)
-
-    def forward(self, input):
-        return self.model(input)
-
 
 # PatchGAN discriminator for "set" of instance attributes
 # See https://openreview.net/forum?id=ryxwJhC9YX for details
@@ -570,26 +646,126 @@ class NLayerSetDiscriminator(nn.Module):
         return out
 
 
-class PixelDiscriminator(nn.Module):
-    def __init__(self, input_nc, ndf=64, norm_layer=nn.BatchNorm2d, use_sigmoid=False):
-        super(PixelDiscriminator, self).__init__()
+class AttDiscriminator(nn.Module):
+    def __init__(self, input_nc, ndf=64, n_layers=3, norm_layer=nn.BatchNorm2d, use_sigmoid=False):
+        super(AttDiscriminator, self).__init__()
+
+        self.input_nc = input_nc
         if type(norm_layer) == functools.partial:
             use_bias = norm_layer.func == nn.InstanceNorm2d
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
-        self.net = [
-            nn.Conv2d(input_nc, ndf, kernel_size=1, stride=1, padding=0),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf, ndf * 2, kernel_size=1, stride=1, padding=0, bias=use_bias),
-            norm_layer(ndf * 2),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf * 2, 1, kernel_size=1, stride=1, padding=0, bias=use_bias)]
+        kw = 4
+        padw = 1
+        self.feature_img = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        self.feature_seg = Feature_extractor(1, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        self.classifier = Classifier(2 * ndf, n_layers, kw, padw, norm_layer, use_sigmoid)  # 2*ndf
 
-        if use_sigmoid:
-            self.net.append(nn.Sigmoid())
+        # Class Activation Map
+        mult = 4
+        self.gap_fc = nn.utils.spectral_norm(nn.Linear(ndf * mult, 1, bias=False))
+        self.gmp_fc = nn.utils.spectral_norm(nn.Linear(ndf * mult, 1, bias=False))
+        self.conv1x1 = nn.Conv2d(ndf * mult * 2, ndf * mult, kernel_size=1, stride=1, bias=True)
+        self.leaky_relu = nn.LeakyReLU(0.2, True)
 
-        self.net = nn.Sequential(*self.net)
+    def forward(self, inp):
+        # split data
+        img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
+        segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
+        mean = (segs + 1).mean(0).mean(-1).mean(-1)
+        if mean.sum() == 0:
+            mean[0] = 1  # forward at least one segmentation
+
+        # run feature extractor for image
+        feat_img = self.feature_img(img)
+        # add attention
+        gap = torch.nn.functional.adaptive_avg_pool2d(feat_img, 1)
+        gap_logit = self.gap_fc(gap.view(feat_img.shape[0], -1))
+        gap_weight = list(self.gap_fc.parameters())[0]
+        gap = feat_img * gap_weight.unsqueeze(2).unsqueeze(3)
+
+        gmp = torch.nn.functional.adaptive_max_pool2d(feat_img, 1)
+        gmp_logit = self.gmp_fc(gmp.view(feat_img.shape[0], -1))
+        gmp_weight = list(self.gmp_fc.parameters())[0]
+        gmp = feat_img * gmp_weight.unsqueeze(2).unsqueeze(3)
+
+        cam_logit = torch.cat([gap_logit, gmp_logit], 1)
+        feat_img = torch.cat([gap, gmp], 1)
+        feat_img = self.leaky_relu(self.conv1x1(feat_img))
+
+        heatmap = torch.sum(feat_img, dim=1, keepdim=True)
+
+        # feature exactor for segmentation
+        feat_segs = list()
+        for i in range(segs.size(1)):
+            if mean[i] > 0:  # skip empty segmentation
+                seg = segs[:, i, :, :].unsqueeze(1)
+                feat_segs.append(self.feature_seg(seg))
+        feat_segs_sum = torch.sum(torch.stack(feat_segs), dim=0)  # aggregated set feature
+
+        # run classifier
+        feat = torch.cat([feat_img, feat_segs_sum], dim=1)
+        out = self.classifier(feat)
+        return out, cam_logit, heatmap
+
+class Feature_extractor(nn.Module):
+    def __init__(self, input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias):
+        super(Feature_extractor, self).__init__()
+
+        model = [
+            # Use spectral normalization
+            SpectralNorm(nn.Conv2d(input_nc, ndf, kernel_size=kw, stride=2, padding=padw)),
+            nn.LeakyReLU(0.2, True)
+        ]
+        nf_mult = 1
+        nf_mult_prev = 1
+        for n in range(1, n_layers):
+            nf_mult_prev = nf_mult
+            nf_mult = min(2 ** n, 8)
+            model += [
+                # Use spectral normalization
+                SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=2, padding=padw,
+                                       bias=use_bias)),
+                norm_layer(ndf * nf_mult),
+                nn.LeakyReLU(0.2, True)
+            ]
+        self.model = nn.Sequential(*model)
 
     def forward(self, input):
-        return self.net(input)
+        return self.model(input)
+    
+class Classifier(nn.Module):
+    def __init__(self, ndf, n_layers, kw, padw, norm_layer, use_sigmoid):
+        super(Classifier, self).__init__()
+
+        nf_mult_prev = min(2 ** (n_layers - 1), 8)
+        nf_mult = min(2 ** n_layers, 8)
+        model = [
+            # Use spectral normalization
+            SpectralNorm(nn.Conv2d(ndf * nf_mult_prev, ndf * nf_mult, kernel_size=kw, stride=1, padding=padw)),
+            norm_layer(ndf * nf_mult),
+            nn.LeakyReLU(0.2, True)
+        ]
+        # Use spectral normalization
+        model += [SpectralNorm(nn.Conv2d(ndf * nf_mult, 1, kernel_size=kw, stride=1, padding=padw))]
+        if use_sigmoid:
+            model += [nn.Sigmoid()]
+        self.model = nn.Sequential(*model)
+
+    def forward(self, input):
+        return self.model(input)
+
+class RhoClipper(object):
+
+    def __init__(self, min, max):
+        self.clip_min = min
+        self.clip_max = max
+        assert min < max
+
+    def __call__(self, module):
+
+        if hasattr(module, 'rho'):
+            w = module.rho.data
+            w = w.clamp(self.clip_min, self.clip_max)
+            module.rho.data = w

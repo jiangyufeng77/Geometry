@@ -61,6 +61,8 @@ class InstaGANModel(BaseModel):
 			self.fake_B_pool = ImagePool(opt.pool_size)
 			# define loss functions
 			self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan).to(self.device)
+			self.cam = torch.nn.MSELoss()
+			self.BCE_loss = torch.nn.BCEWithLogitsLoss()
 			self.criterionCyc = torch.nn.L1Loss()
 			self.criterionIdt = torch.nn.L1Loss()
 			# initialize optimizers
@@ -69,6 +71,9 @@ class InstaGANModel(BaseModel):
 			self.optimizers = []
 			self.optimizers.append(self.optimizer_G)
 			self.optimizers.append(self.optimizer_D)
+
+			""" Define Rho clipper to constraint the value of rho in AdaILN and ILN"""
+			self.Rho_clipper = networks.RhoClipper(0, 1)
 
 	def select_masks(self, segs_batch):
 		"""Select instance masks to use"""
@@ -143,8 +148,8 @@ class InstaGANModel(BaseModel):
 		# forward A
 		if self.forward_A:
 			self.real_A_sng = torch.cat([self.real_A_img_sng, self.real_A_seg_sng], dim=1)
-			self.fake_B_sng = self.netG_A(self.real_A_sng)
-			self.rec_A_sng = self.netG_B(self.fake_B_sng)
+			self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
+			self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
 
 			self.fake_B_img_sng, self.fake_B_seg_sng = self.split(self.fake_B_sng)
 			self.rec_A_img_sng, self.rec_A_seg_sng = self.split(self.rec_A_sng)
@@ -158,8 +163,8 @@ class InstaGANModel(BaseModel):
 		# forward B
 		if self.forward_B:
 			self.real_B_sng = torch.cat([self.real_B_img_sng, self.real_B_seg_sng], dim=1)
-			self.fake_A_sng = self.netG_B(self.real_B_sng)
-			self.rec_B_sng = self.netG_A(self.fake_A_sng)
+			self.fake_A_sng, self.fake_A_cam_logit, _ = self.netG_B(self.real_B_sng)
+			self.rec_B_sng, _, _ = self.netG_A(self.fake_A_sng)
 
 			self.fake_A_img_sng, self.fake_A_seg_sng = self.split(self.fake_A_sng)
 			self.rec_B_img_sng, self.rec_B_seg_sng = self.split(self.rec_B_sng)
@@ -212,43 +217,59 @@ class InstaGANModel(BaseModel):
 
 		# backward A
 		if self.forward_A:
-			self.loss_G_A = self.criterionGAN(self.netD_A(self.fake_B_mul), True)
+			self.fake_GB_mul, self.fake_GB_cam_logit, _ = self.netD_A(self.fake_B_mul)
+			self.loss_G_A = self.criterionGAN(self.fake_GB_mul, True)
+			self.loss_ad_cam_A = self.cam(self.fake_GB_cam_logit, torch.ones_like(self.fake_GB_cam_logit))
+
 			self.loss_cyc_A = self.criterionCyc(self.rec_A_sng, self.real_A_sng) * lambda_A
-			self.loss_idt_B = self.criterionIdt(self.netG_B(self.real_A_sng), self.real_A_sng.detach()) * lambda_A * lambda_idt
+
+			self.fake_AA_sng, self.fake_AA_cam_logit, _ = self.netG_B(self.real_A_sng)
+			self.loss_idt_B = self.criterionIdt(self.fake_AA_sng, self.real_A_sng.detach()) * lambda_A * lambda_idt
+
 			weight_A = self.get_weight_for_ctx(self.real_A_seg_sng, self.fake_B_seg_sng)
 			self.loss_ctx_A = self.weighted_L1_loss(self.real_A_img_sng, self.fake_B_img_sng, weight=weight_A) * lambda_A * lambda_ctx
 		else:
 			self.loss_G_A = 0
+			self.loss_ad_cam_A = 0
 			self.loss_cyc_A = 0
 			self.loss_idt_B = 0
 			self.loss_ctx_A = 0
 
 		# backward B
 		if self.forward_B:
-			self.loss_G_B = self.criterionGAN(self.netD_B(self.fake_A_mul), True)
+			self.fake_GA_mul, self.fake_GA_cam_logit, _ = self.netD_B(self.fake_A_mul)
+			self.loss_G_B = self.criterionGAN(self.fake_GA_mul, True)
+			self.loss_ad_cam_B = self.cam(self.fake_GA_cam_logit, torch.ones_like(self.fake_GA_cam_logit))
+
 			self.loss_cyc_B = self.criterionCyc(self.rec_B_sng, self.real_B_sng) * lambda_B
-			self.loss_idt_A = self.criterionIdt(self.netG_A(self.real_B_sng), self.real_B_sng.detach()) * lambda_B * lambda_idt
+
+			self.fake_BB_sng, self.fake_BB_cam_logit, _ = self.netG_A(self.real_B_sng)
+			self.loss_idt_A = self.criterionIdt(self.fake_BB_sng, self.real_B_sng.detach()) * lambda_B * lambda_idt
+
 			weight_B = self.get_weight_for_ctx(self.real_B_seg_sng, self.fake_A_seg_sng)
 			self.loss_ctx_B = self.weighted_L1_loss(self.real_B_img_sng, self.fake_A_img_sng, weight=weight_B) * lambda_B * lambda_ctx
 		else:
 			self.loss_G_B = 0
+			self.loss_ad_cam_B = 0
 			self.loss_cyc_B = 0
 			self.loss_idt_A = 0
 			self.loss_ctx_B = 0
 
 		# combined loss
-		self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cyc_A + self.loss_cyc_B + self.loss_idt_A + self.loss_idt_B + self.loss_ctx_A + self.loss_ctx_B
+		self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cyc_A + self.loss_cyc_B + self.loss_idt_A + self.loss_idt_B + self.loss_ctx_A + self.loss_ctx_B + self.loss_ad_cam_A + self.loss_ad_cam_B
 		self.loss_G.backward()
 
 	def backward_D_basic(self, netD, real, fake):
 		# Real
-		pred_real = netD(real)
+		pred_real, pred_real_cam_logit, _ = netD(real)
 		loss_D_real = self.criterionGAN(pred_real, True)
+		loss_D_real_cam = self.cam(pred_real_cam_logit, torch.ones_like(pred_real_cam_logit))
 		# Fake
-		pred_fake = netD(fake.detach())
+		pred_fake, pred_fake_cam_logit, _ = netD(fake.detach())
 		loss_D_fake = self.criterionGAN(pred_fake, False)
+		loss_D_fake_cam = self.cam(pred_fake_cam_logit, torch.zeros_like(pred_fake_cam_logit))
 		# Combined loss
-		loss_D = (loss_D_real + loss_D_fake) * 0.5
+		loss_D = (loss_D_real + loss_D_real_cam + loss_D_fake + loss_D_fake_cam) * 0.5
 		# backward
 		loss_D.backward()
 		return loss_D
@@ -311,3 +332,7 @@ class InstaGANModel(BaseModel):
 				self.fake_B_seg = self.merge_masks(self.fake_B_seg_mul)
 				self.rec_A_seg = self.merge_masks(torch.cat(self.rec_A_seg_list, dim=1))
 				self.rec_B_seg = self.merge_masks(torch.cat(self.rec_B_seg_list, dim=1))
+
+			# clip parameter of AdaILN and ILN, applied after optimizer step
+			self.netG_A.apply(self.Rho_clipper)
+			self.netG_B.apply(self.Rho_clipper)
