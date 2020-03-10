@@ -126,8 +126,8 @@ class InstaGANModel(BaseModel):
 		AtoB = self.opt.direction == 'AtoB'
 		self.real_A_img = input['A' if AtoB else 'B'].to(self.device)
 		self.real_B_img = input['B' if AtoB else 'A'].to(self.device)
-		real_A_segs = input['A_segs' if AtoB else 'B_segs']
-		real_B_segs = input['B_segs' if AtoB else 'A_segs']
+		real_A_segs = input['A' if AtoB else 'B']
+		real_B_segs = input['B' if AtoB else 'A']
 		self.real_A_segs = self.select_masks(real_A_segs).to(self.device)
 		self.real_B_segs = self.select_masks(real_B_segs).to(self.device)
 		self.real_A = torch.cat([self.real_A_img, self.real_A_segs], dim=1)
