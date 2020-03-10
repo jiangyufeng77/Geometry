@@ -78,8 +78,6 @@ class UnalignedSegDataset(BaseDataset):
 			B = tmp.unsqueeze(0)
 
 		return {'A': A, 'B': B,
-				'A_idx': A_idx, 'B_idx': B_idx,
-				'A_segs': A_segs, 'B_segs': B_segs,
 				'A_paths': A_path, 'B_paths': B_path}
 
 	def __len__(self):
