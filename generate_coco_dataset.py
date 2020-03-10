@@ -70,6 +70,7 @@ def generate_coco_dataset_sub(args, idx1, idx2, cat):
 			seg = Image.fromarray(seg * 255)
 			seg = resize(seg, args.image_size)
 			if np.sum(np.asarray(seg)) > 0:
+				print(seg.shape)
 				mask.append(seg)
 		mask.save(seg_path / '{}.png'.format(pb.n))
 		# 		count += 1
