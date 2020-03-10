@@ -64,17 +64,14 @@ def generate_coco_dataset_sub(args, idx1, idx2, cat):
 		anns = coco.loadAnns(ann_ids)
 
 		# count = 0
-		seg = coco.annToMask(anns[i])
-		seg = Image.fromarray(seg * 255)
-		seg = resize(seg, args.image_size)
-		if np.sum(np.asarray(seg)) > 0:
-			seg.save(seg_path / '{}.png'.format(pb.n))
-		# for i in range(len(anns)):
-		# 	seg = coco.annToMask(anns[i])
-		# 	seg = Image.fromarray(seg * 255)
-		# 	seg = resize(seg, args.image_size)
-		# 	if np.sum(np.asarray(seg)) > 0:
-		# 		seg.save(seg_path / '{}_{}.png'.format(pb.n, count))
+		mask = []
+		for i in range(len(anns)):
+			seg = coco.annToMask(anns[i])
+			seg = Image.fromarray(seg * 255)
+			seg = resize(seg, args.image_size)
+			if np.sum(np.asarray(seg)) > 0:
+				mask.append(seg)
+		mask.save(seg_path / '{}.png'.format(pb.n))
 		# 		count += 1
 
 		# if count > 0:  # at least one instance exists
