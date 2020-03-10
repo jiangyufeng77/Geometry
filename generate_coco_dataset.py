@@ -72,10 +72,10 @@ def generate_coco_dataset_sub(args, idx1, idx2, cat):
 		if np.sum(np.asarray(seg)) > 0:
 			seg.save(seg_path / '{}.png'.format(pb.n))
 			count += 1
-		# if count > 0:  # at least one instance exists
-		img = Image.open(data_path / img['file_name'])
-		img = resize(img, args.image_size)
-		img.save(img_path / '{}.png'.format(pb.n))
+		if count > 0:  # at least one instance exists
+			img = Image.open(data_path / img['file_name'])
+			img = resize(img, args.image_size)
+			img.save(img_path / '{}.png'.format(pb.n))
 
 		pb.update(1)
 	pb.close()
