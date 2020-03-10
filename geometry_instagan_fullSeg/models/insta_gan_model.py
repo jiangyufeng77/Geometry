@@ -75,23 +75,23 @@ class InstaGANModel(BaseModel):
 			""" Define Rho clipper to constraint the value of rho in AdaILN and ILN"""
 			self.Rho_clipper = networks.RhoClipper(0, 1)
 
-	def select_masks(self, segs_batch):
-		"""Select instance masks to use"""
-		if self.opt.set_order == 'decreasing':
-			return self.select_masks_decreasing(segs_batch)
-		elif self.opt.set_order == 'random':
-			return self.select_masks_random(segs_batch)
-		else:
-			raise NotImplementedError('Set order name [%s] is not recognized' % self.opt.set_order)
+	# def select_masks(self, segs_batch):
+	# 	"""Select instance masks to use"""
+	# 	if self.opt.set_order == 'decreasing':
+	# 		return self.select_masks_decreasing(segs_batch)
+	# 	elif self.opt.set_order == 'random':
+	# 		return self.select_masks_random(segs_batch)
+	# 	else:
+	# 		raise NotImplementedError('Set order name [%s] is not recognized' % self.opt.set_order)
 
-	def select_masks_decreasing(self, segs_batch):
-		"""Select masks in decreasing order"""
-		ret = list()
-		for segs in segs_batch:
-			mean = segs.mean(-1).mean(-1)
-			m, i = mean.topk(self.opt.ins_max)
-			ret.append(segs[i, :, :])
-		return torch.stack(ret)
+	# def select_masks_decreasing(self, segs_batch):
+	# 	"""Select masks in decreasing order"""
+		# ret = list()
+		# for segs in segs_batch:
+		# 	mean = segs.mean(-1).mean(-1)
+		# 	m, i = mean.topk(self.opt.ins_max)
+		# 	ret.append(segs[i, :, :])
+		# return torch.stack(ret)
 
 	def select_masks_random(self, segs_batch):
 		"""Select masks in random order"""
@@ -126,88 +126,54 @@ class InstaGANModel(BaseModel):
 		AtoB = self.opt.direction == 'AtoB'
 		self.real_A_img = input['A' if AtoB else 'B'].to(self.device)
 		self.real_B_img = input['B' if AtoB else 'A'].to(self.device)
-		real_A_segs = input['A' if AtoB else 'B']
-		real_B_segs = input['B' if AtoB else 'A']
-		self.real_A_segs = self.select_masks(real_A_segs).to(self.device)
-		self.real_B_segs = self.select_masks(real_B_segs).to(self.device)
-		self.real_A = torch.cat([self.real_A_img, self.real_A_segs], dim=1)
-		self.real_B = torch.cat([self.real_B_img, self.real_B_segs], dim=1)
-		self.real_A_seg = self.merge_masks(self.real_A_segs)  # merged mask
-		self.real_B_seg = self.merge_masks(self.real_B_segs)  # merged mask
+		self.real_A_seg = input['A' if AtoB else 'B'].to(self.device)
+		self.real_B_seg = input['B' if AtoB else 'A'].to(self.device)
+		# self.real_A_segs = self.select_masks(real_A_segs).to(self.device)
+		# self.real_B_segs = self.select_masks(real_B_segs).to(self.device)
+		self.real_A = torch.cat([self.real_A_img, self.real_A_seg], dim=1)
+		self.real_B = torch.cat([self.real_B_img, self.real_B_seg], dim=1)
+		# self.real_A_seg = self.merge_masks(self.real_A_segs)  # merged mask
+		# self.real_B_seg = self.merge_masks(self.real_B_segs)  # merged mask
 		self.image_paths = input['A_paths' if AtoB else 'B_paths']
 
 	def forward(self, idx=0):
-		N = self.opt.ins_per
-		self.real_A_seg_sng = self.real_A_segs[:, N*idx:N*(idx+1), :, :]  # ith mask
-		self.real_B_seg_sng = self.real_B_segs[:, N*idx:N*(idx+1), :, :]  # ith mask
-		empty = -torch.ones(self.real_A_seg_sng.size()).to(self.device)  # empty image
+		# N = self.opt.ins_per
+		# self.real_A_seg_sng = self.real_A_segs[:, N*idx:N*(idx+1), :, :]  # ith mask
+		# self.real_B_seg_sng = self.real_B_segs[:, N*idx:N*(idx+1), :, :]  # ith mask
+		# empty = -torch.ones(self.real_A_seg.size()).to(self.device)  # empty image
 
-		self.forward_A = (self.real_A_seg_sng + 1).sum() > 0  # check if there are remaining instances
-		self.forward_B = (self.real_B_seg_sng + 1).sum() > 0  # check if there are remaining instances
+		# self.forward_A = (self.real_A_seg_sng + 1).sum() > 0  # check if there are remaining instances
+		# self.forward_B = (self.real_B_seg_sng + 1).sum() > 0  # check if there are remaining instances
 
 		# forward A
-		if self.forward_A:
-			self.real_A_sng = torch.cat([self.real_A_img_sng, self.real_A_seg_sng], dim=1)
-			self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
-			self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
+		# if self.forward_A:
+		self.real_A_sng = torch.cat([self.real_A_img, self.real_A_seg], dim=1)
+		self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
+		self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
 
-			self.fake_B_img_sng, self.fake_B_seg_sng = self.split(self.fake_B_sng)
-			self.rec_A_img_sng, self.rec_A_seg_sng = self.split(self.rec_A_sng)
-			fake_B_seg_list = self.fake_B_seg_list + [self.fake_B_seg_sng]  # not detach
-			for i in range(self.ins_iter - idx - 1):
-				fake_B_seg_list.append(empty)
+		self.fake_B_img_sng, self.fake_B_seg_sng = self.split(self.fake_B_sng)
+		self.rec_A_img_sng, self.rec_A_seg_sng = self.split(self.rec_A_sng)
+		# fake_B_seg_list = self.fake_B_seg_list + [self.fake_B_seg_sng]  # not detach
+		# for i in range(self.ins_iter - idx - 1):
+		# 	fake_B_seg_list.append(empty)
 
-			self.fake_B_seg_mul = torch.cat(fake_B_seg_list, dim=1)
-			self.fake_B_mul = torch.cat([self.fake_B_img_sng, self.fake_B_seg_mul], dim=1)
+		# self.fake_B_seg_mul = torch.cat(fake_B_seg_list, dim=1)
+		# self.fake_B_mul = torch.cat([self.fake_B_img_sng, self.fake_B_seg_mul], dim=1)
 
 		# forward B
-		if self.forward_B:
-			self.real_B_sng = torch.cat([self.real_B_img_sng, self.real_B_seg_sng], dim=1)
-			self.fake_A_sng, self.fake_A_cam_logit, _ = self.netG_B(self.real_B_sng)
-			self.rec_B_sng, _, _ = self.netG_A(self.fake_A_sng)
+		# if self.forward_B:
+		self.real_B_sng = torch.cat([self.real_B_img, self.real_B_seg], dim=1)
+		self.fake_A_sng, self.fake_A_cam_logit, _ = self.netG_B(self.real_B_sng)
+		self.rec_B_sng, _, _ = self.netG_A(self.fake_A_sng)
 
-			self.fake_A_img_sng, self.fake_A_seg_sng = self.split(self.fake_A_sng)
-			self.rec_B_img_sng, self.rec_B_seg_sng = self.split(self.rec_B_sng)
-			fake_A_seg_list = self.fake_A_seg_list + [self.fake_A_seg_sng]  # not detach
-			for i in range(self.ins_iter - idx - 1):
-				fake_A_seg_list.append(empty)
+		self.fake_A_img_sng, self.fake_A_seg_sng = self.split(self.fake_A_sng)
+		self.rec_B_img_sng, self.rec_B_seg_sng = self.split(self.rec_B_sng)
+		# fake_A_seg_list = self.fake_A_seg_list + [self.fake_A_seg_sng]  # not detach
+		# for i in range(self.ins_iter - idx - 1):
+		# 	fake_A_seg_list.append(empty)
 
-			self.fake_A_seg_mul = torch.cat(fake_A_seg_list, dim=1)
-			self.fake_A_mul = torch.cat([self.fake_A_img_sng, self.fake_A_seg_mul], dim=1)
-
-	def test(self):
-		self.real_A_img_sng = self.real_A_img
-		self.real_B_img_sng = self.real_B_img
-		self.fake_A_seg_list = list()
-		self.fake_B_seg_list = list()
-		self.rec_A_seg_list = list()
-		self.rec_B_seg_list = list()
-
-		# sequential mini-batch translation
-		for i in range(self.ins_iter):
-			# forward
-			with torch.no_grad():  # no grad
-				self.forward(i)
-
-			# update setting for next iteration
-			self.real_A_img_sng = self.fake_B_img_sng.detach()
-			self.real_B_img_sng = self.fake_A_img_sng.detach()
-			self.fake_A_seg_list.append(self.fake_A_seg_sng.detach())
-			self.fake_B_seg_list.append(self.fake_B_seg_sng.detach())
-			self.rec_A_seg_list.append(self.rec_A_seg_sng.detach())
-			self.rec_B_seg_list.append(self.rec_B_seg_sng.detach())
-
-			# save visuals
-			if i == 0:  # first
-				self.rec_A_img = self.rec_A_img_sng
-				self.rec_B_img = self.rec_B_img_sng
-			if i == self.ins_iter - 1:  # last
-				self.fake_A_img = self.fake_A_img_sng
-				self.fake_B_img = self.fake_B_img_sng
-				self.fake_A_seg = self.merge_masks(self.fake_A_seg_mul)
-				self.fake_B_seg = self.merge_masks(self.fake_B_seg_mul)
-				self.rec_A_seg = self.merge_masks(torch.cat(self.rec_A_seg_list, dim=1))
-				self.rec_B_seg = self.merge_masks(torch.cat(self.rec_B_seg_list, dim=1))
+		# self.fake_A_seg_mul = torch.cat(fake_A_seg_list, dim=1)
+		# self.fake_A_mul = torch.cat([self.fake_A_img_sng, self.fake_A_seg_mul], dim=1)
 
 	def backward_G(self):
 		lambda_A = self.opt.lambda_A
@@ -216,44 +182,44 @@ class InstaGANModel(BaseModel):
 		lambda_ctx = self.opt.lambda_ctx
 
 		# backward A
-		if self.forward_A:
-			self.fake_GB_mul, self.fake_GB_cam_logit, _ = self.netD_A(self.fake_B_mul)
-			self.loss_G_A = self.criterionGAN(self.fake_GB_mul, True)
-			self.loss_ad_cam_A = self.cam(self.fake_GB_cam_logit, torch.ones_like(self.fake_GB_cam_logit))
+		# if self.forward_A:
+		self.fake_GB_mul, self.fake_GB_cam_logit, _ = self.netD_A(self.fake_B_sng)
+		self.loss_G_A = self.criterionGAN(self.fake_GB_mul, True)
+		self.loss_ad_cam_A = self.cam(self.fake_GB_cam_logit, torch.ones_like(self.fake_GB_cam_logit))
 
-			self.loss_cyc_A = self.criterionCyc(self.rec_A_sng, self.real_A_sng) * lambda_A
+		self.loss_cyc_A = self.criterionCyc(self.rec_A_sng, self.real_A_sng) * lambda_A
 
-			self.fake_AA_sng, self.fake_AA_cam_logit, _ = self.netG_B(self.real_A_sng)
-			self.loss_idt_B = self.criterionIdt(self.fake_AA_sng, self.real_A_sng.detach()) * lambda_A * lambda_idt
+		self.fake_AA_sng, self.fake_AA_cam_logit, _ = self.netG_B(self.real_A_sng)
+		self.loss_idt_B = self.criterionIdt(self.fake_AA_sng, self.real_A_sng.detach()) * lambda_A * lambda_idt
 
-			weight_A = self.get_weight_for_ctx(self.real_A_seg_sng, self.fake_B_seg_sng)
-			self.loss_ctx_A = self.weighted_L1_loss(self.real_A_img_sng, self.fake_B_img_sng, weight=weight_A) * lambda_A * lambda_ctx
-		else:
-			self.loss_G_A = 0
-			self.loss_ad_cam_A = 0
-			self.loss_cyc_A = 0
-			self.loss_idt_B = 0
-			self.loss_ctx_A = 0
+		weight_A = self.get_weight_for_ctx(self.real_A_seg, self.fake_B_seg_sng)
+		self.loss_ctx_A = self.weighted_L1_loss(self.real_A_img, self.fake_B_img_sng, weight=weight_A) * lambda_A * lambda_ctx
+		# else:
+		# 	self.loss_G_A = 0
+		# 	self.loss_ad_cam_A = 0
+		# 	self.loss_cyc_A = 0
+		# 	self.loss_idt_B = 0
+		# 	self.loss_ctx_A = 0
 
 		# backward B
-		if self.forward_B:
-			self.fake_GA_mul, self.fake_GA_cam_logit, _ = self.netD_B(self.fake_A_mul)
-			self.loss_G_B = self.criterionGAN(self.fake_GA_mul, True)
-			self.loss_ad_cam_B = self.cam(self.fake_GA_cam_logit, torch.ones_like(self.fake_GA_cam_logit))
+		# if self.forward_B:
+		self.fake_GA_mul, self.fake_GA_cam_logit, _ = self.netD_B(self.fake_A_sng)
+		self.loss_G_B = self.criterionGAN(self.fake_GA_mul, True)
+		self.loss_ad_cam_B = self.cam(self.fake_GA_cam_logit, torch.ones_like(self.fake_GA_cam_logit))
 
-			self.loss_cyc_B = self.criterionCyc(self.rec_B_sng, self.real_B_sng) * lambda_B
+		self.loss_cyc_B = self.criterionCyc(self.rec_B_sng, self.real_B_sng) * lambda_B
 
-			self.fake_BB_sng, self.fake_BB_cam_logit, _ = self.netG_A(self.real_B_sng)
-			self.loss_idt_A = self.criterionIdt(self.fake_BB_sng, self.real_B_sng.detach()) * lambda_B * lambda_idt
+		self.fake_BB_sng, self.fake_BB_cam_logit, _ = self.netG_A(self.real_B_sng)
+		self.loss_idt_A = self.criterionIdt(self.fake_BB_sng, self.real_B_sng.detach()) * lambda_B * lambda_idt
 
-			weight_B = self.get_weight_for_ctx(self.real_B_seg_sng, self.fake_A_seg_sng)
-			self.loss_ctx_B = self.weighted_L1_loss(self.real_B_img_sng, self.fake_A_img_sng, weight=weight_B) * lambda_B * lambda_ctx
-		else:
-			self.loss_G_B = 0
-			self.loss_ad_cam_B = 0
-			self.loss_cyc_B = 0
-			self.loss_idt_A = 0
-			self.loss_ctx_B = 0
+		weight_B = self.get_weight_for_ctx(self.real_B_seg, self.fake_A_seg_sng)
+		self.loss_ctx_B = self.weighted_L1_loss(self.real_B_img, self.fake_A_img_sng, weight=weight_B) * lambda_B * lambda_ctx
+		# else:
+		# 	self.loss_G_B = 0
+		# 	self.loss_ad_cam_B = 0
+		# 	self.loss_cyc_B = 0
+		# 	self.loss_idt_A = 0
+		# 	self.loss_ctx_B = 0
 
 		# combined loss
 		self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cyc_A + self.loss_cyc_B + self.loss_idt_A + self.loss_idt_B + self.loss_ctx_A + self.loss_ctx_B + self.loss_ad_cam_A + self.loss_ad_cam_B
@@ -275,64 +241,113 @@ class InstaGANModel(BaseModel):
 		return loss_D
 
 	def backward_D_A(self):
-		fake_B = self.fake_B_pool.query(self.fake_B_mul)
+		fake_B = self.fake_B_pool.query(self.fake_B_sng)
 		self.loss_D_A = self.backward_D_basic(self.netD_A, self.real_B, fake_B)
 
 	def backward_D_B(self):
-		fake_A = self.fake_A_pool.query(self.fake_A_mul)
+		fake_A = self.fake_A_pool.query(self.fake_A_sng)
 		self.loss_D_B = self.backward_D_basic(self.netD_B, self.real_A, fake_A)
 
 	def optimize_parameters(self):
+		self.forward()
+		# G_A and G_B
+		self.set_requires_grad([self.netD_A, self.netD_B], False)
+		self.optimizer_G.zero_grad()
+		self.backward_G()
+		self.optimizer_G.step()
+		# D_A and D_B
+		self.set_requires_grad([self.netD_A, self.netD_B], True)
+		self.optimizer_D.zero_grad()
+		self.backward_D_A()
+		self.backward_D_B()
+		self.optimizer_D.step()
+
+		# clip parameter of AdaILN and ILN, applied after optimizer step
+		self.netG_A.apply(self.Rho_clipper)
+		self.netG_B.apply(self.Rho_clipper)
+
+
 		# init setting
-		self.real_A_img_sng = self.real_A_img
-		self.real_B_img_sng = self.real_B_img
-		self.fake_A_seg_list = list()
-		self.fake_B_seg_list = list()
-		self.rec_A_seg_list = list()
-		self.rec_B_seg_list = list()
+		# self.real_A_img_sng = self.real_A_img
+		# self.real_B_img_sng = self.real_B_img
+		# self.fake_A_seg_list = list()
+		# self.fake_B_seg_list = list()
+		# self.rec_A_seg_list = list()
+		# self.rec_B_seg_list = list()
 
 		# sequential mini-batch translation
-		for i in range(self.ins_iter):
-			# forward
-			self.forward(i)
+		# for i in range(self.ins_iter):
+		# 	# forward
+		# 	self.forward(i)
+		#
+		# 	# G_A and G_B
+		# 	if self.forward_A or self.forward_B:
+		# 		self.set_requires_grad([self.netD_A, self.netD_B], False)
+		# 		self.optimizer_G.zero_grad()
+		# 		self.backward_G()
+		# 		self.optimizer_G.step()
+		#
+		# 	# D_A and D_B
+		# 	if self.forward_A or self.forward_B:
+		# 		self.set_requires_grad([self.netD_A, self.netD_B], True)
+		# 		self.optimizer_D.zero_grad()
+		# 		if self.forward_A:
+		# 			self.backward_D_A()
+		# 		if self.forward_B:
+		# 			self.backward_D_B()
+		# 		self.optimizer_D.step()
+		#
+		# 	# update setting for next iteration
+		# 	self.real_A_img_sng = self.fake_B_img_sng.detach()
+		# 	self.real_B_img_sng = self.fake_A_img_sng.detach()
+		# 	self.fake_A_seg_list.append(self.fake_A_seg_sng.detach())
+		# 	self.fake_B_seg_list.append(self.fake_B_seg_sng.detach())
+		# 	self.rec_A_seg_list.append(self.rec_A_seg_sng.detach())
+		# 	self.rec_B_seg_list.append(self.rec_B_seg_sng.detach())
+		#
+		# 	# save visuals
+		# 	if i == 0:  # first
+		# 		self.rec_A_img = self.rec_A_img_sng
+		# 		self.rec_B_img = self.rec_B_img_sng
+		# 	if i == self.ins_iter - 1:  # last
+		# 		self.fake_A_img = self.fake_A_img_sng
+		# 		self.fake_B_img = self.fake_B_img_sng
+		# 		self.fake_A_seg = self.merge_masks(self.fake_A_seg_mul)
+		# 		self.fake_B_seg = self.merge_masks(self.fake_B_seg_mul)
+		# 		self.rec_A_seg = self.merge_masks(torch.cat(self.rec_A_seg_list, dim=1))
+		# 		self.rec_B_seg = self.merge_masks(torch.cat(self.rec_B_seg_list, dim=1))
 
-			# G_A and G_B
-			if self.forward_A or self.forward_B:
-				self.set_requires_grad([self.netD_A, self.netD_B], False)
-				self.optimizer_G.zero_grad()
-				self.backward_G()
-				self.optimizer_G.step()
 
-			# D_A and D_B
-			if self.forward_A or self.forward_B:
-				self.set_requires_grad([self.netD_A, self.netD_B], True)
-				self.optimizer_D.zero_grad()
-				if self.forward_A:
-					self.backward_D_A()
-				if self.forward_B:
-					self.backward_D_B()
-				self.optimizer_D.step()
-
-			# update setting for next iteration
-			self.real_A_img_sng = self.fake_B_img_sng.detach()
-			self.real_B_img_sng = self.fake_A_img_sng.detach()
-			self.fake_A_seg_list.append(self.fake_A_seg_sng.detach())
-			self.fake_B_seg_list.append(self.fake_B_seg_sng.detach())
-			self.rec_A_seg_list.append(self.rec_A_seg_sng.detach())
-			self.rec_B_seg_list.append(self.rec_B_seg_sng.detach())
-
-			# save visuals
-			if i == 0:  # first
-				self.rec_A_img = self.rec_A_img_sng
-				self.rec_B_img = self.rec_B_img_sng
-			if i == self.ins_iter - 1:  # last
-				self.fake_A_img = self.fake_A_img_sng
-				self.fake_B_img = self.fake_B_img_sng
-				self.fake_A_seg = self.merge_masks(self.fake_A_seg_mul)
-				self.fake_B_seg = self.merge_masks(self.fake_B_seg_mul)
-				self.rec_A_seg = self.merge_masks(torch.cat(self.rec_A_seg_list, dim=1))
-				self.rec_B_seg = self.merge_masks(torch.cat(self.rec_B_seg_list, dim=1))
-
-			# clip parameter of AdaILN and ILN, applied after optimizer step
-			self.netG_A.apply(self.Rho_clipper)
-			self.netG_B.apply(self.Rho_clipper)
+# def test(self):
+	# 	self.real_A_img_sng = self.real_A_img
+	# 	self.real_B_img_sng = self.real_B_img
+	# 	self.fake_A_seg_list = list()
+	# 	self.fake_B_seg_list = list()
+	# 	self.rec_A_seg_list = list()
+	# 	self.rec_B_seg_list = list()
+	#
+	# 	# sequential mini-batch translation
+	# 	for i in range(self.ins_iter):
+	# 		# forward
+	# 		with torch.no_grad():  # no grad
+	# 			self.forward(i)
+	#
+	# 		# update setting for next iteration
+	# 		self.real_A_img_sng = self.fake_B_img_sng.detach()
+	# 		self.real_B_img_sng = self.fake_A_img_sng.detach()
+	# 		self.fake_A_seg_list.append(self.fake_A_seg_sng.detach())
+	# 		self.fake_B_seg_list.append(self.fake_B_seg_sng.detach())
+	# 		self.rec_A_seg_list.append(self.rec_A_seg_sng.detach())
+	# 		self.rec_B_seg_list.append(self.rec_B_seg_sng.detach())
+	#
+	# 		# save visuals
+	# 		if i == 0:  # first
+	# 			self.rec_A_img = self.rec_A_img_sng
+	# 			self.rec_B_img = self.rec_B_img_sng
+	# 		if i == self.ins_iter - 1:  # last
+	# 			self.fake_A_img = self.fake_A_img_sng
+	# 			self.fake_B_img = self.fake_B_img_sng
+	# 			self.fake_A_seg = self.merge_masks(self.fake_A_seg_mul)
+	# 			self.fake_B_seg = self.merge_masks(self.fake_B_seg_mul)
+	# 			self.rec_A_seg = self.merge_masks(torch.cat(self.rec_A_seg_list, dim=1))
+	# 			self.rec_B_seg = self.merge_masks(torch.cat(self.rec_B_seg_list, dim=1))
