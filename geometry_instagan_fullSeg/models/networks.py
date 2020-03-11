@@ -241,6 +241,7 @@ class UGATGenerator(nn.Module):
         # segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
 
         # run image encoder
+        print(inp.shape)
         enc_img = self.encoder_img(inp)
         # add attention to image
         gap = torch.nn.functional.adaptive_avg_pool2d(enc_img, 1)
@@ -277,11 +278,11 @@ class UGATGenerator(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type, use_bias):
+    def __init__(self, inp_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type, use_bias):
         super(Encoder, self).__init__()
 
         model = [nn.ReflectionPad2d(3),
-                 nn.Conv2d(input_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
+                 nn.Conv2d(inp_nc, ngf, kernel_size=7, padding=0, bias=use_bias),
                  norm_layer(ngf),
                  nn.ReLU(True)]
 
