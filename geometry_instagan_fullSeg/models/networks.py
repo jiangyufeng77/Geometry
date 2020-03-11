@@ -230,8 +230,8 @@ class UGATGenerator(nn.Module):
                   nn.ReLU(True),
                   nn.Linear(ngf * mult, ngf * mult, bias=False),
                   nn.ReLU(True)]
-        self.gamma = nn.Linear(ngf * mult, 2 * ngf * mult, bias=False)
-        self.beta = nn.Linear(ngf * mult, 2 * ngf * mult, bias=False)
+        self.gamma = nn.Linear(ngf * mult, 4 * ngf * mult, bias=False)
+        self.beta = nn.Linear(ngf * mult, 4 * ngf * mult, bias=False)
 
         self.FC = nn.Sequential(*FC)
 
