@@ -207,7 +207,7 @@ class UGATGenerator(nn.Module):
         n_downsampling = 2
         self.encoder_img = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
                                             padding_type, use_bias)
-        self.encoder_seg = Encoder(1, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type,
+        self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type,
                                             use_bias)
         self.dec = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
         # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf

@@ -34,10 +34,10 @@ class InstaGANModel(BaseModel):
 		# specify the training losses you want to print out. The program will call base_model.get_current_losses
 		self.loss_names = ['D_A', 'G_A', 'cyc_A', 'idt_A', 'ctx_A', 'D_B', 'G_B', 'cyc_B', 'idt_B', 'ctx_B']
 		# specify the images you want to save/display. The program will call base_model.get_current_visuals
-		visual_names_A_img = ['real_A_img', 'fake_B_img', 'rec_A_img']
-		visual_names_B_img = ['real_B_img', 'fake_A_img', 'rec_B_img']
-		visual_names_A_seg = ['real_A_seg', 'fake_B_seg', 'rec_A_seg']
-		visual_names_B_seg = ['real_B_seg', 'fake_A_seg', 'rec_B_seg']
+		visual_names_A_img = ['real_A_img', 'fake_B_img_sng', 'rec_A_img_sng']
+		visual_names_B_img = ['real_B_img', 'fake_A_img_sng', 'rec_B_img_sng']
+		visual_names_A_seg = ['real_A_seg', 'fake_B_seg_sng', 'rec_A_seg_sng']
+		visual_names_B_seg = ['real_B_seg', 'fake_A_seg_sng', 'rec_B_seg_sng']
 		self.visual_names = visual_names_A_img + visual_names_A_seg + visual_names_B_img + visual_names_B_seg
 		# specify the models you want to save to the disk. The program will call base_model.save_networks and base_model.load_networks
 		if self.isTrain:
@@ -74,24 +74,6 @@ class InstaGANModel(BaseModel):
 
 			""" Define Rho clipper to constraint the value of rho in AdaILN and ILN"""
 			self.Rho_clipper = networks.RhoClipper(0, 1)
-
-	# def select_masks(self, segs_batch):
-	# 	"""Select instance masks to use"""
-	# 	if self.opt.set_order == 'decreasing':
-	# 		return self.select_masks_decreasing(segs_batch)
-	# 	elif self.opt.set_order == 'random':
-	# 		return self.select_masks_random(segs_batch)
-	# 	else:
-	# 		raise NotImplementedError('Set order name [%s] is not recognized' % self.opt.set_order)
-
-	# def select_masks_decreasing(self, segs_batch):
-	# 	"""Select masks in decreasing order"""
-		# ret = list()
-		# for segs in segs_batch:
-		# 	mean = segs.mean(-1).mean(-1)
-		# 	m, i = mean.topk(self.opt.ins_max)
-		# 	ret.append(segs[i, :, :])
-		# return torch.stack(ret)
 
 	def select_masks_random(self, segs_batch):
 		"""Select masks in random order"""
@@ -147,7 +129,6 @@ class InstaGANModel(BaseModel):
 
 		# forward A
 		# if self.forward_A:
-		print(self.real_A_seg.shape)
 		self.real_A_sng = self.real_A
 		self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
 		self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
