@@ -52,16 +52,21 @@ class UnalignedSegDataset(BaseDataset):
 		else:
 			index_B = random.randint(0, self.B_size - 1)
 		B_path = self.B_paths[index_B]
-		A_seg = Image.open(A_path).convert('RGB')
-		B_seg = Image.open(B_path).convert('RGB')
 
-		A = self.transform(A_seg)
-		B = self.transform(B_seg)
+		A = Image.open(A_path).convert('RGB')
+		B = Image.open(B_path).convert('RGB')
+		A = self.transform(A)
+		B = self.transform(B)
 		# A = self.fixed_transform(A, seed)
 		# B = self.fixed_transform(B, seed)
 		#
-		# A_segs = self.read_segs(A_seg_path, seed)
-		# B_segs = self.read_segs(B_seg_path, seed)
+		# seed = random.randint(-sys.maxsize, sys.maxsize)
+		A_seg_path = A_path.replace('A', 'A_{}'.format(self.seg_dir))
+		B_seg_path = B_path.replace('B', 'B_{}'.format(self.seg_dir))
+		A_seg = Image.open(A_seg_path).convert('L')
+		B_seg = Image.open(B_seg_path).convert('L')
+		A_seg = self.transform(A_seg)
+		B_seg = self.transform(B_seg)
 
 		if self.opt.direction == 'BtoA':
 			input_nc = self.opt.output_nc
@@ -78,6 +83,7 @@ class UnalignedSegDataset(BaseDataset):
 			B = tmp.unsqueeze(0)
 
 		return {'A': A, 'B': B,
+				'A_seg': A_seg, 'B_seg': B_seg,
 				'A_paths': A_path, 'B_paths': B_path}
 
 	def __len__(self):
