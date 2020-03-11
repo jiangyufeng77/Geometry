@@ -239,10 +239,7 @@ class UGATGenerator(nn.Module):
         # split data
         img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
         segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
-        mean = (segs + 1).mean(0).mean(-1).mean(-1)
-        if mean.sum() == 0:
-            mean[0] = 1  # forward at least one segmentation
-
+        
         # run image encoder
         enc_img = self.encoder_img(img)
         # add attention to image
