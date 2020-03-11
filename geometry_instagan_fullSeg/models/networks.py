@@ -205,11 +205,11 @@ class UGATGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         n_downsampling = 2
-        self.encoder_img = Encoder(2*input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+        self.encoder_img = Encoder(input_nc+1, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
                                    padding_type, use_bias)
         # self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
         #                            padding_type, use_bias)
-        self.dec = Decoder_img(2*output_nc, ngf, n_blocks, use_bias)  # 2*ngf
+        self.dec = Decoder_img(output_nc+1, ngf, n_blocks, use_bias)  # 2*ngf
         # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
 
         mult = 2 ** n_downsampling
@@ -611,7 +611,7 @@ class AttDiscriminator(nn.Module):
 
         kw = 4
         padw = 1
-        self.feature_img = Feature_extractor(2*input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        self.feature_img = Feature_extractor(input_nc+1, ndf, n_layers, kw, padw, norm_layer, use_bias)
         # self.feature_seg = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
         self.classifier = Classifier(ndf, n_layers, kw, padw, norm_layer, use_sigmoid)  # 2*ndf
 
