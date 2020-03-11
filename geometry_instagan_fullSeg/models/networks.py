@@ -274,7 +274,7 @@ class UGATGenerator(nn.Module):
 
         # run decoder
         feat = torch.cat([enc_img, enc_segs], dim=1)
-        out = self.dec(feat)
+        out = self.dec(feat, gamma, beta)
         return out, cam_logit, heatmap
 
 
