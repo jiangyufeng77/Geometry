@@ -206,9 +206,9 @@ class UGATGenerator(nn.Module):
 
         n_downsampling = 2
         self.encoder_img = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
-                                            padding_type, use_bias)
-        self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type,
-                                            use_bias)
+                                   padding_type, use_bias)
+        self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+                                   padding_type, use_bias)
         self.dec = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
         # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
 
@@ -239,7 +239,7 @@ class UGATGenerator(nn.Module):
         # split data
         img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
         segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
-        
+
         # run image encoder
         enc_img = self.encoder_img(img)
         # add attention to image

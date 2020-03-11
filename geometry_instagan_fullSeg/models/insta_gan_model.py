@@ -129,6 +129,7 @@ class InstaGANModel(BaseModel):
 
 		# forward A
 		# if self.forward_A:
+		print(self.real_A_seg)
 		self.real_A_sng = self.real_A
 		self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
 		self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
