@@ -209,7 +209,7 @@ class UGATGenerator(nn.Module):
                                    padding_type, use_bias)
         # self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
         #                            padding_type, use_bias)
-        self.dec = Decoder_img(output_nc, ngf, n_blocks, use_bias)  # 2*ngf
+        self.dec = Decoder_img(2*output_nc, ngf, n_blocks, use_bias)  # 2*ngf
         # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
 
         mult = 2 ** n_downsampling
@@ -241,7 +241,7 @@ class UGATGenerator(nn.Module):
         # segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
 
         # run image encoder
-        print(inp.shape)
+        # print(inp.shape)
         enc_img = self.encoder_img(inp)
         # add attention to image
         gap = torch.nn.functional.adaptive_avg_pool2d(enc_img, 1)
