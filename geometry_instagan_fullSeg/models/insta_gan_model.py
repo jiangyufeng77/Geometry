@@ -147,7 +147,8 @@ class InstaGANModel(BaseModel):
 
 		# forward A
 		# if self.forward_A:
-		self.real_A_sng = torch.cat([self.real_A_img, self.real_A_seg], dim=1)
+		print(self.real_A_seg.shape)
+		self.real_A_sng = self.real_A
 		self.fake_B_sng, self.fake_B_cam_logit, _ = self.netG_A(self.real_A_sng)
 		self.rec_A_sng, _, _ = self.netG_B(self.fake_B_sng)
 
@@ -162,7 +163,7 @@ class InstaGANModel(BaseModel):
 
 		# forward B
 		# if self.forward_B:
-		self.real_B_sng = torch.cat([self.real_B_img, self.real_B_seg], dim=1)
+		self.real_B_sng = self.real_B
 		self.fake_A_sng, self.fake_A_cam_logit, _ = self.netG_B(self.real_B_sng)
 		self.rec_B_sng, _, _ = self.netG_A(self.fake_A_sng)
 
