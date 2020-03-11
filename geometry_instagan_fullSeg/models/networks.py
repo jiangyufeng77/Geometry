@@ -205,11 +205,11 @@ class UGATGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         n_downsampling = 2
-        self.encoder_img = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+        self.encoder_img = Encoder(input_nc*2, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
                                    padding_type, use_bias)
-        self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
-                                   padding_type, use_bias)
-        self.dec = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
+        # self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+        #                            padding_type, use_bias)
+        self.dec = Decoder_img(output_nc, ngf, n_blocks, use_bias)  # 2*ngf
         # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
 
         mult = 2 ** n_downsampling
@@ -237,11 +237,11 @@ class UGATGenerator(nn.Module):
 
     def forward(self, inp):
         # split data
-        img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
-        segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
+        # img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
+        # segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
 
         # run image encoder
-        enc_img = self.encoder_img(img)
+        enc_img = self.encoder_img(inp)
         # add attention to image
         gap = torch.nn.functional.adaptive_avg_pool2d(enc_img, 1)
         gap_logit = self.gap_fc(gap.view(enc_img.shape[0], -1))
@@ -267,11 +267,11 @@ class UGATGenerator(nn.Module):
         gamma, beta = self.gamma(x_), self.beta(x_)
 
         # run segmentation encoder
-        enc_segs = self.encoder_seg(segs)
+        # enc_segs = self.encoder_seg(segs)
 
         # run decoder
-        # feat = enc_img
-        feat = torch.cat([enc_img, enc_segs], dim=1)
+        feat = enc_img
+        # feat = torch.cat([enc_img, enc_segs], dim=1)
         out = self.dec(feat, gamma, beta)
         return out, cam_logit, heatmap
 
@@ -610,9 +610,9 @@ class AttDiscriminator(nn.Module):
 
         kw = 4
         padw = 1
-        self.feature_img = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
-        self.feature_seg = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
-        self.classifier = Classifier(2 * ndf, n_layers, kw, padw, norm_layer, use_sigmoid)  # 2*ndf
+        self.feature_img = Feature_extractor(2*input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        # self.feature_seg = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        self.classifier = Classifier(ndf, n_layers, kw, padw, norm_layer, use_sigmoid)  # 2*ndf
 
         # Class Activation Map
         mult = 4
@@ -623,11 +623,11 @@ class AttDiscriminator(nn.Module):
 
     def forward(self, inp):
         # split data
-        img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
-        segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
+        # img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
+        # segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
 
         # run feature extractor for image
-        feat_img = self.feature_img(img)
+        feat_img = self.feature_img(inp)
         # add attention
         gap = torch.nn.functional.adaptive_avg_pool2d(feat_img, 1)
         gap_logit = self.gap_fc(gap.view(feat_img.shape[0], -1))
@@ -646,10 +646,11 @@ class AttDiscriminator(nn.Module):
         heatmap = torch.sum(feat_img, dim=1, keepdim=True)
 
         # feature exactor for segmentation
-        feat_segs = self.feature_seg(segs)
+        # feat_segs = self.feature_seg(segs)
 
         # run classifier
-        feat = torch.cat([feat_img, feat_segs], dim=1)
+        feat = feat_img
+        # feat = torch.cat([feat_img, feat_segs], dim=1)
         out = self.classifier(feat)
         return out, cam_logit, heatmap
 
