@@ -209,8 +209,8 @@ class UGATGenerator(nn.Module):
                                             padding_type, use_bias)
         self.encoder_seg = Encoder(1, n_downsampling, ngf, norm_layer, use_dropout, n_blocks, padding_type,
                                             use_bias)
-        self.decoder_img = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
-        self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
+        self.dec = Decoder_img(output_nc, 2*ngf, n_blocks, use_bias)  # 2*ngf
+        # self.decoder_seg = Decoder_seg(1, 3*ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias)  # 3*ngf
 
         mult = 2 ** n_downsampling
         # Class Activation Map
@@ -270,27 +270,12 @@ class UGATGenerator(nn.Module):
         gamma, beta = self.gamma(x_), self.beta(x_)
 
         # run segmentation encoder
-        enc_segs = list()
-        for i in range(segs.size(1)):
-            if mean[i] > 0:  # skip empty segmentation
-                seg = segs[:, i, :, :].unsqueeze(1)
-                enc_segs.append(self.encoder_seg(seg))
-        enc_segs = torch.cat(enc_segs)
-        enc_segs_sum = torch.sum(enc_segs, dim=0, keepdim=True)  # aggregated set feature
+        enc_segs = self.encoder_seg(segs)
 
         # run decoder
-        feat = torch.cat([enc_img, enc_segs_sum], dim=1)
-        out = [self.decoder_img(feat, gamma, beta)]
-        idx = 0
-        for i in range(segs.size(1)):
-            if mean[i] > 0:
-                enc_seg = enc_segs[idx].unsqueeze(0)  # (1, ngf, w, h)
-                idx += 1  # move to next index
-                feat = torch.cat([enc_seg, enc_img, enc_segs_sum], dim=1)
-                out += [self.decoder_seg(feat)]
-            else:
-                out += [segs[:, i, :, :].unsqueeze(1)]  # skip empty segmentation
-        return torch.cat(out, dim=1), cam_logit, heatmap
+        feat = torch.cat([enc_img, enc_segs], dim=1)
+        out = self.dec(feat)
+        return out, cam_logit, heatmap
 
 
 class Encoder(nn.Module):
@@ -347,37 +332,6 @@ class Decoder_img(nn.Module):
         for i in range(self.n_blocks):
             x = getattr(self, 'UpBlock1_' + str(i + 1))(input, gamma, beta)
         out = self.UpBlock2(x)
-        return out
-
-class Decoder_seg(nn.Module):
-    def __init__(self, output_nc, ngf, n_blocks, norm_layer, use_dropout, padding_type, use_bias):
-        super(Decoder_seg, self).__init__()
-
-        self.n_blocks = n_blocks
-        # Up-Sampling Bottleneck
-        n_downsampling = 2
-        mult = 2 ** n_downsampling
-        UpBlock = []
-        for i in range(n_blocks):
-            UpBlock += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
-                                  use_bias=use_bias)]
-
-        # Up-Sampling
-        for i in range(n_downsampling):
-            mult = 2 ** (n_downsampling - i)
-            UpBlock += [nn.ConvTranspose2d(ngf * mult, int(ngf * mult / 2), kernel_size=3, stride=2, padding=1,
-                                            output_padding=1, bias=use_bias),
-                         norm_layer(int(ngf * mult / 2)),
-                         nn.ReLU(True)]
-
-        UpBlock += [nn.ReflectionPad2d(3)]
-        UpBlock += [nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
-        UpBlock += [nn.Tanh()]
-
-        self.UpBlock = nn.Sequential(*UpBlock)
-
-    def forward(self, input):
-        out = self.UpBlock(input)
         return out
 
 
@@ -673,9 +627,6 @@ class AttDiscriminator(nn.Module):
         # split data
         img = inp[:, :self.input_nc, :, :]  # (B, CX, W, H)
         segs = inp[:, self.input_nc:, :, :]  # (B, CA, W, H)
-        mean = (segs + 1).mean(0).mean(-1).mean(-1)
-        if mean.sum() == 0:
-            mean[0] = 1  # forward at least one segmentation
 
         # run feature extractor for image
         feat_img = self.feature_img(img)
@@ -697,15 +648,10 @@ class AttDiscriminator(nn.Module):
         heatmap = torch.sum(feat_img, dim=1, keepdim=True)
 
         # feature exactor for segmentation
-        feat_segs = list()
-        for i in range(segs.size(1)):
-            if mean[i] > 0:  # skip empty segmentation
-                seg = segs[:, i, :, :].unsqueeze(1)
-                feat_segs.append(self.feature_seg(seg))
-        feat_segs_sum = torch.sum(torch.stack(feat_segs), dim=0)  # aggregated set feature
+        feat_segs = self.feature_seg(segs)
 
         # run classifier
-        feat = torch.cat([feat_img, feat_segs_sum], dim=1)
+        feat = torch.cat([feat_img, feat_segs], dim=1)
         out = self.classifier(feat)
         return out, cam_logit, heatmap
 
