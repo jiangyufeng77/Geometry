@@ -205,7 +205,7 @@ class UGATGenerator(nn.Module):
             use_bias = norm_layer == nn.InstanceNorm2d
 
         n_downsampling = 2
-        self.encoder_img = Encoder(input_nc*2, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
+        self.encoder_img = Encoder(2*input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
                                    padding_type, use_bias)
         # self.encoder_seg = Encoder(input_nc, n_downsampling, ngf, norm_layer, use_dropout, n_blocks,
         #                            padding_type, use_bias)
