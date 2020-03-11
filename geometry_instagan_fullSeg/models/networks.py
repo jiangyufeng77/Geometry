@@ -270,6 +270,7 @@ class UGATGenerator(nn.Module):
         enc_segs = self.encoder_seg(segs)
 
         # run decoder
+        # feat = enc_img
         feat = torch.cat([enc_img, enc_segs], dim=1)
         out = self.dec(feat, gamma, beta)
         return out, cam_logit, heatmap
@@ -610,7 +611,7 @@ class AttDiscriminator(nn.Module):
         kw = 4
         padw = 1
         self.feature_img = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
-        self.feature_seg = Feature_extractor(1, ndf, n_layers, kw, padw, norm_layer, use_bias)
+        self.feature_seg = Feature_extractor(input_nc, ndf, n_layers, kw, padw, norm_layer, use_bias)
         self.classifier = Classifier(2 * ndf, n_layers, kw, padw, norm_layer, use_sigmoid)  # 2*ndf
 
         # Class Activation Map
