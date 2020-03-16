@@ -10,35 +10,42 @@ class autoencoder(nn.Module):
         super(autoencoder, self).__init__()
 
         self.encoder = nn.Sequential(
-            # channels * 64 * 64->64*32*32
             nn.Conv2d(3, 64, 3, 1, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
-            # 64*32*32->128*16*16
+            # channels * 64 * 64->64*32*32
             nn.Conv2d(64, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
-            # 128*16*16->256*8*8
+            # 64*32*32->128*16*16
             nn.Conv2d(128, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
-            # 256*8*8->512*4*4
+            # 128*16*16->256*8*8
             nn.Conv2d(256, 512, 4, 2, 1, bias=False),
             nn.BatchNorm2d(512, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
+            # 256*8*8->512*4*4
+            nn.Conv2d(512, 1024, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(1024, 0.8),
+            nn.LeakyReLU(0.2, inplace=True),
             # 512 * 4 * 4 -> 1*1*1
-            nn.Conv2d(512, 100, 4, 1, 0, bias=False)
+            nn.Conv2d(1024, 100, 4, 1, 0, bias=False)
         )
 
         self.decoder = nn.Sequential(
-            nn.ConvTranspose2d(100, 512, kernel_size=4, stride=1, padding=0, bias=False),
-            nn.BatchNorm2d(512, 0.8),
+            nn.ConvTranspose2d(100*2, 1024, kernel_size=4, stride=1, padding=0, bias=False),
+            nn.BatchNorm2d(1024, 0.8),
             nn.ReLU(),
+
+            nn.ConvTranspose2d(1024, 512, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(512, 0.8),
+            nn.ReLU(inplace=True),
 
             nn.ConvTranspose2d(512, 256, 4, 2, 1, bias=False),
             nn.BatchNorm2d(256, 0.8),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(512, 128, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(256, 128, 4, 2, 1, bias=False),
             nn.BatchNorm2d(128, 0.8),
             nn.ReLU(inplace=True),
 
@@ -51,6 +58,15 @@ class autoencoder(nn.Module):
         )
 
         self.geo = GeoTransform()
+
+    def forward(self, x, output_size, random_affine):
+        geo_out = self.geo.forward(x, output_size, random_affine)
+        enc_outT = self.encoder(geo_out)
+        geo_T_out = self.geo.forward(enc_outT, output_size, -random_affine)
+        enc_out = self.encoder(x)
+        dec_in = torch.cat((geo_T_out, enc_out), dim=1)
+        dec_out = self.decoder(dec_in)
+        return dec_out
 
 
 class GeoTransform(nn.Module):

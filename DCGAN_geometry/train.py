@@ -11,7 +11,7 @@ from torchvision import datasets
 import args
 from torch.autograd import Variable
 import torchvision.transforms as transforms
-from networks_ori import autoencoder
+from networks import autoencoder, random_size
 
 
 os.environ['CUDA_VISIBLE_DEVICES'] = "0"
@@ -33,6 +33,8 @@ train_loader = DataLoader(datasets.CIFAR10(args.dataroot, train=True,
 loss_fn = torch.nn.MSELoss()
 loss_fn = loss_fn.cuda()
 
+input_tensor = torch.FloatTensor(args.batch_size, 3, args.input_crop_size, args.input_crop_size).cuda()
+
 # init model and optimizer
 model = autoencoder()
 model = model.cuda()
@@ -46,7 +48,15 @@ for epoch in range(args.num_epoch):
         real_image = Variable(image.type(torch.cuda.FloatTensor))
         optimizer.zero_grad()
 
-        fake_image = model(real_image)
+        output_size, random_affine = random_size(orig_size=input_tensor.shape[2:],
+                                                 curriculum=True,
+                                                 i=args.cur_iter,
+                                                 iter_for_max_range=args.iter_for_max_range,
+                                                 must_divide=args.must_divide,
+                                                 min_scale=args.min_scale,
+                                                 max_scale=args.max_scale,
+                                                 max_transform_magniutude=args.max_transform_magnitude)
+        fake_image = model(real_image, output_size, random_affine)
         loss = 0.5 * loss_fn(real_image, fake_image)
         loss.backward()
         optimizer.step()
