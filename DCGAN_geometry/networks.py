@@ -61,11 +61,13 @@ class autoencoder(nn.Module):
 
     def forward(self, x, output_size, random_affine):
         geo_out = self.geo.forward(x, output_size, random_affine)
+        print(geo_out.shape)
         enc_outT = self.encoder(geo_out)
-        geo_T_out = self.geo.forward(enc_outT, output_size, -random_affine)
-        print(geo_T_out.shape)
-        enc_out = self.encoder(x)
-        print(enc_out.shape)
+        print(enc_outT.shape)
+        geo_T_out = self.geo.forward(enc_outT, output_size, -random_affine) #([8, 100, 64, 64])
+        # print(geo_T_out.shape)
+        enc_out = self.encoder(x) # ([8, 100, 1, 1])
+        # print(enc_out.shape)
         dec_in = torch.cat((geo_T_out, enc_out), dim=1)
         dec_out = self.decoder(dec_in)
         return dec_out
