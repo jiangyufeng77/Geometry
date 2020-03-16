@@ -34,7 +34,7 @@ loss_fn = torch.nn.MSELoss()
 loss_fn = loss_fn.cuda()
 
 # init model and optimizer
-model = autoencoder(args.channels, args.dim, args.latent_didm)
+model = autoencoder()
 model = model.cuda()
 optimizer = Adam(model.parameters(), lr=args.learning_rate)
 
