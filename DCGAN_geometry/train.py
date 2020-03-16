@@ -14,7 +14,7 @@ import torchvision.transforms as transforms
 from networks import autoencoder, random_size
 
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "0"
+os.environ['CUDA_VISIBLE_DEVICES'] = "3"
 
 if not os.path.exists(args.log_txt):
     os.mknod(args.log_txt)
