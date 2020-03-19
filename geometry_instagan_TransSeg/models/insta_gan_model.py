@@ -63,7 +63,6 @@ class InstaGANModel(BaseModel):
 			self.fake_B_pool = ImagePool(opt.pool_size)
 			# define loss functions
 			self.criterionGAN = networks.GANLoss(use_lsgan=not opt.no_lsgan).to(self.device)
-			self.cam = torch.nn.MSELoss()
 			self.BCE_loss = torch.nn.BCEWithLogitsLoss()
 			self.criterionCyc = torch.nn.L1Loss()
 			self.criterionIdt = torch.nn.L1Loss()
@@ -73,9 +72,6 @@ class InstaGANModel(BaseModel):
 			self.optimizers = []
 			self.optimizers.append(self.optimizer_G)
 			self.optimizers.append(self.optimizer_D)
-
-			""" Define Rho clipper to constraint the value of rho in AdaILN and ILN"""
-			self.Rho_clipper = networks.RhoClipper(0, 1)
 
 	def select_masks_random(self, segs_batch):
 		"""Select masks in random order"""
