@@ -222,7 +222,7 @@ class TransGenerator(nn.Module):
         img_T = self.geo.forward(img, output_size, random_affine)
         segs_T = self.geo.forward(segs, output_size, random_affine)
         enc_input = torch.cat([img_T, segs_T], dim=1)
-        enc_img = self.encoder_img(enc_input)
+        enc_img = self.enc(enc_input)
 
         enc_img_T = self.geo.forward(enc_img, enc_img.shape[2:], -random_affine)
 
