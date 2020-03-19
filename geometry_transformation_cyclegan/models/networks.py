@@ -339,8 +339,8 @@ class ResnetGenerator(nn.Module):
         else:
             use_bias = norm_layer == nn.InstanceNorm2d
 
-        self.enc = Encoder(input_nc, ngf, norm_layer, use_bias)
-        self.cen = Center(ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias)
+        self.enc = Encoder(input_nc, ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias)
+        # self.cen = Center(ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias)
         self.dec = Decoder(output_nc, ngf, norm_layer, use_bias)
 
         self.geo = GeoTransform()
@@ -350,13 +350,13 @@ class ResnetGenerator(nn.Module):
         output1 = self.geo.forward(input, output_size, random_affine) # torch.Size([1, 3, 256, 256])
         output2 = self.enc(output1)
         output3 = self.geo.forward(output2, output2.shape[2:], -random_affine)
-        output4 = self.cen(output3)
-        output5 = self.dec(output4)
-        return output5
+        # output4 = self.cen(output3)
+        output = self.dec(output3)
+        return output
 
 
 class Encoder(nn.Module):
-    def __init__(self, input_nc, ngf, norm_layer, use_bias):
+    def __init__(self, input_nc, ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias):
         super(Encoder, self).__init__()
 
         model = [nn.ReflectionPad2d(3),
@@ -370,25 +370,30 @@ class Encoder(nn.Module):
                       norm_layer(ngf * mult * 2),
                       nn.ReLU(True)]
 
+        mult = 2 ** n_downsampling
+        for i in range(n_blocks):  # add ResNet blocks
+            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout,
+                                  use_bias=use_bias)]
+
         self.down = nn.Sequential(*model)
 
     def forward(self, x):
         return self.down(x)
 
-class Center(nn.Module):
-    def __init__(self, ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias):
-        super(Center, self).__init__()
-
-        n_downsampling = 2
-        model = []
-        mult = 2 ** n_downsampling
-        for i in range(n_blocks):       # add ResNet blocks
-            model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
-
-        self.center = nn.Sequential(*model)
-
-    def forward(self, x):
-        return self.center(x)
+# class Center(nn.Module):
+#     def __init__(self, ngf, n_blocks, padding_type, norm_layer, use_dropout, use_bias):
+#         super(Center, self).__init__()
+#
+#         n_downsampling = 2
+#         model = []
+#         mult = 2 ** n_downsampling
+#         for i in range(n_blocks):       # add ResNet blocks
+#             model += [ResnetBlock(ngf * mult, padding_type=padding_type, norm_layer=norm_layer, use_dropout=use_dropout, use_bias=use_bias)]
+#
+#         self.center = nn.Sequential(*model)
+#
+#     def forward(self, x):
+#         return self.center(x)
 
 class Decoder(nn.Module):
     def __init__(self, output_nc, ngf, norm_layer, use_bias):
