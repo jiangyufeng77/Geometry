@@ -178,10 +178,10 @@ class InstaGANModel(BaseModel):
 
 	def backward_D_basic(self, netD, real, fake):
 		# Real
-		pred_real, pred_real_cam_logit, _ = netD(real)
+		pred_real = netD(real)
 		loss_D_real = self.criterionGAN(pred_real, True)
 		# Fake
-		pred_fake, pred_fake_cam_logit, _ = netD(fake.detach())
+		pred_fake = netD(fake.detach())
 		loss_D_fake = self.criterionGAN(pred_fake, False)
 		# Combined loss
 		loss_D = (loss_D_real + loss_D_fake) * 0.5
