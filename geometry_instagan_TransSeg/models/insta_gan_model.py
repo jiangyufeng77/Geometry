@@ -173,20 +173,18 @@ class InstaGANModel(BaseModel):
 		self.loss_ctx_B = self.weighted_L1_loss(self.real_B_img, self.fake_A_img_sng, weight=weight_B) * lambda_B * lambda_ctx
 
 		# combined loss
-		self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cyc_A + self.loss_cyc_B + self.loss_idt_A + self.loss_idt_B + self.loss_ctx_A + self.loss_ctx_B + self.loss_ad_cam_A + self.loss_ad_cam_B
+		self.loss_G = self.loss_G_A + self.loss_G_B + self.loss_cyc_A + self.loss_cyc_B + self.loss_idt_A + self.loss_idt_B + self.loss_ctx_A + self.loss_ctx_B
 		self.loss_G.backward()
 
 	def backward_D_basic(self, netD, real, fake):
 		# Real
 		pred_real, pred_real_cam_logit, _ = netD(real)
 		loss_D_real = self.criterionGAN(pred_real, True)
-		loss_D_real_cam = self.cam(pred_real_cam_logit, torch.ones_like(pred_real_cam_logit))
 		# Fake
 		pred_fake, pred_fake_cam_logit, _ = netD(fake.detach())
 		loss_D_fake = self.criterionGAN(pred_fake, False)
-		loss_D_fake_cam = self.cam(pred_fake_cam_logit, torch.zeros_like(pred_fake_cam_logit))
 		# Combined loss
-		loss_D = (loss_D_real + loss_D_real_cam + loss_D_fake + loss_D_fake_cam) * 0.5
+		loss_D = (loss_D_real + loss_D_fake) * 0.5
 		# backward
 		loss_D.backward()
 		return loss_D
