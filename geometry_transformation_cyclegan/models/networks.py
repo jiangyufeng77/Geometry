@@ -347,8 +347,7 @@ class ResnetGenerator(nn.Module):
 
     def forward(self, input, output_size, random_affine):
         """Standard forward"""
-        output1 = self.geo.forward(input, output_size, random_affine)
-        print(output1.shape)
+        output1 = self.geo.forward(input, output_size, random_affine) # torch.Size([1, 3, 256, 256])
         output2 = self.enc(output1)
         output3 = self.geo.forward(output2, output2.shape[2:], -random_affine)
         output4 = self.cen(output3)
@@ -373,7 +372,7 @@ class Encoder(nn.Module):
 
         self.down = nn.Sequential(*model)
 
-    def forword(self, x):
+    def forward(self, x):
         return self.down(x)
 
 class Center(nn.Module):
