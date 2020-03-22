@@ -7,7 +7,7 @@ from torchvision import datasets
 
 dir_name1 = "/media/ouc/4T_A/jiang/baseline/instagan/datasets/shp2gir_coco/trainA"
 dir_name2 = "/media/ouc/4T_A/jiang/baseline/instagan/datasets/shp2gir_coco/trainA_seg"
-dir_name3 = "/Users/jiangyufeng/Desktop/pants2skirt_mhp/newTrainA"
+dir_name3 = "/media/ouc/4T_A/jiang/baseline/instagan/datasets/shp2gir_coco/newTrainA"
 
 if not os.path.exists(dir_name3):
 	os.makedirs(dir_name3)
